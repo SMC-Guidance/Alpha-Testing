@@ -86,6 +86,8 @@ function doPost(e) {
         var action = req.action;
         var payload = req.payload || {};
         var session = verifyToken(req.token);
+        // Revalidate every token against the live account so deletions, role changes,
+        // and account locks take effect immediately instead of surviving in a token.
         if (session) {
             var liveUser = findUser(session.username);
             if (!liveUser) session = null;
@@ -374,13 +376,51 @@ function handleSetReportStatus(session, p) {
     }
     throw httpError('Report not found.', 'NOT_FOUND');
 }
-var CLASSLIST_HEADERS=['level','section','adviser','room','sex','studentNumber','status','name','concern','note'];
-var CLASSFLAG_HEADERS=['studentNumber','flag','note','updatedBy','updatedAt'];
-function classListSheet(){return sheetOrCreate('ClassLists',CLASSLIST_HEADERS);} function classFlagSheet(){return sheetOrCreate('ClassFlags',CLASSFLAG_HEADERS);}
-function readClassFlagMap(){var v=classFlagSheet().getDataRange().getValues(),m={};for(var r=1;r<v.length;r++){var id=String(v[r][0]||'').trim();if(id)m[id]={flag:String(v[r][1]||''),note:String(v[r][2]||'')};}return m;}
-function handleListClassLists(session){var v=classListSheet().getDataRange().getValues();if(v.length<2)return {sections:[]};var h=v[0].map(function(x){return String(x||'').trim().toLowerCase();});function c(n){return h.indexOf(n.toLowerCase());}var q={level:c('level'),section:c('section'),adviser:c('adviser'),room:c('room'),sex:c('sex'),id:c('studentNumber'),status:c('status'),name:c('name'),concern:c('concern'),note:c('note')};if(q.level<0||q.section<0||q.id<0||q.name<0)throw httpError('ClassLists sheet headers are invalid. Import the supplied private CSV.','CONFIG');var flags=readClassFlagMap(),by={},out=[];for(var r=1;r<v.length;r++){var row=v[r],id=String(row[q.id]||'').trim(),name=String(row[q.name]||'').trim();if(!id&&!name)continue;var level=String(row[q.level]||''),section=String(row[q.section]||''),key=level+'||'+section;if(!by[key]){by[key]={level:level,section:section,adviser:q.adviser>=0?String(row[q.adviser]||''):'',room:q.room>=0?String(row[q.room]||''):'',students:[]};out.push(by[key]);}var o=flags[id]||{};by[key].students.push({sex:q.sex>=0?String(row[q.sex]||''):'',lrn:id,status:q.status>=0?String(row[q.status]||''):'',name:name,flag:o.flag!=null?o.flag:(q.concern>=0?String(row[q.concern]||''):''),note:o.note!=null?o.note:(q.note>=0?String(row[q.note]||''):'')});}return {sections:out};}
-function handleListClassFlags(session){return {flags:readClassFlagMap()};}
-function handleSaveClassFlag(session,p){var id=String(p&&(p.lrn||p.studentNumber)||'').trim().slice(0,40),flag=String(p&&p.flag||'').trim(),note=String(p&&p.note||'').trim().slice(0,2000);if(!id)throw httpError('Student number is required.','BAD_REQUEST');if(flag&&['Behavior','Academic','Close Monitoring'].indexOf(flag)===-1)throw httpError('Invalid concern type.','BAD_REQUEST');var sh=classFlagSheet(),v=sh.getDataRange().getValues(),now=new Date().toISOString();for(var r=1;r<v.length;r++)if(String(v[r][0]||'').trim()===id){if(!flag&&!note)sh.deleteRow(r+1);else sh.getRange(r+1,2,1,4).setValues([[flag,note,session.username,now]]);return {saved:true};}if(flag||note)sh.appendRow([id,flag,note,session.username,now]);return {saved:true};}
+var CLASSLIST_HEADERS = ['level','section','adviser','room','sex','studentNumber','status','name','concern','note'];
+var CLASSFLAG_HEADERS = ['studentNumber','flag','note','updatedBy','updatedAt'];
+function classListSheet() { return sheetOrCreate('ClassLists', CLASSLIST_HEADERS); }
+function classFlagSheet() { return sheetOrCreate('ClassFlags', CLASSFLAG_HEADERS); }
+function readClassFlagMap() {
+    var vals = classFlagSheet().getDataRange().getValues(), map = {};
+    for (var r = 1; r < vals.length; r++) {
+        var id = String(vals[r][0] || '').trim();
+        if (id) map[id] = { flag: String(vals[r][1] || ''), note: String(vals[r][2] || '') };
+    }
+    return map;
+}
+function handleListClassLists(session) {
+    var vals = classListSheet().getDataRange().getValues();
+    if (vals.length < 2) return { sections: [] };
+    var h = vals[0].map(function (x) { return String(x || '').trim().toLowerCase(); });
+    function col(n) { return h.indexOf(n.toLowerCase()); }
+    var c = { level:col('level'), section:col('section'), adviser:col('adviser'), room:col('room'), sex:col('sex'), id:col('studentNumber'), status:col('status'), name:col('name'), concern:col('concern'), note:col('note') };
+    if (c.level < 0 || c.section < 0 || c.id < 0 || c.name < 0) throw httpError('ClassLists sheet headers are invalid. Import the supplied private CSV.', 'CONFIG');
+    var flags = readClassFlagMap(), by = {}, out = [];
+    for (var r = 1; r < vals.length; r++) {
+        var row = vals[r], id = String(row[c.id] || '').trim(), name = String(row[c.name] || '').trim();
+        if (!id && !name) continue;
+        var level = String(row[c.level] || ''), section = String(row[c.section] || ''), key = level + '||' + section;
+        if (!by[key]) { by[key] = { level:level, section:section, adviser:c.adviser >= 0 ? String(row[c.adviser] || '') : '', room:c.room >= 0 ? String(row[c.room] || '') : '', students:[] }; out.push(by[key]); }
+        var override = flags[id] || {};
+        by[key].students.push({ sex:c.sex >= 0 ? String(row[c.sex] || '') : '', lrn:id, status:c.status >= 0 ? String(row[c.status] || '') : '', name:name, flag:override.flag != null ? override.flag : (c.concern >= 0 ? String(row[c.concern] || '') : ''), note:override.note != null ? override.note : (c.note >= 0 ? String(row[c.note] || '') : '') });
+    }
+    return { sections: out };
+}
+function handleListClassFlags(session) { return { flags: readClassFlagMap() }; }
+function handleSaveClassFlag(session, p) {
+    var id = String(p && (p.lrn || p.studentNumber) || '').trim().slice(0, 40);
+    var flag = String(p && p.flag || '').trim();
+    var note = String(p && p.note || '').trim().slice(0, 2000);
+    if (!id) throw httpError('Student number is required.', 'BAD_REQUEST');
+    if (flag && ['Behavior','Academic','Close Monitoring'].indexOf(flag) === -1) throw httpError('Invalid concern type.', 'BAD_REQUEST');
+    var sh = classFlagSheet(), vals = sh.getDataRange().getValues(), now = new Date().toISOString();
+    for (var r = 1; r < vals.length; r++) if (String(vals[r][0] || '').trim() === id) {
+        if (!flag && !note) sh.deleteRow(r + 1); else sh.getRange(r + 1, 2, 1, 4).setValues([[flag,note,session.username,now]]);
+        return { saved:true };
+    }
+    if (flag || note) sh.appendRow([id,flag,note,session.username,now]);
+    return { saved:true };
+}
 
 var CLASSCOLOR_HEADERS = ['key', 'color', 'updatedBy', 'updatedAt'];
 function classColorSheet() { return sheetOrCreate('ClassColors', CLASSCOLOR_HEADERS); }
@@ -470,13 +510,20 @@ function handleSaveRoutine(session, p) {
 var SCHEDULE_HEADERS = ['id','type','label','full','grade','gnum','adviser','section','gridJson'];
 function scheduleSheet() { return sheetOrCreate('Schedules', SCHEDULE_HEADERS); }
 function handleListSchedules(session) {
- var vals=scheduleSheet().getDataRange().getValues(); if(vals.length<2)return {schedules:[]};
- var h=vals[0].map(function(x){return String(x||'').trim().toLowerCase();}); function c(n){return h.indexOf(n.toLowerCase());}
- var ci={id:c('id'),type:c('type'),label:c('label'),full:c('full'),grade:c('grade'),gnum:c('gnum'),adviser:c('adviser'),section:c('section'),grid:c('gridJson')};
- if(ci.id<0||ci.type<0||ci.label<0||ci.grid<0)throw httpError('Schedules sheet headers are invalid. Import the supplied private CSV.','CONFIG');
- var out=[]; for(var r=1;r<vals.length;r++){if(!String(vals[r][ci.id]||'').trim())continue;var grid=[];try{grid=JSON.parse(String(vals[r][ci.grid]||'[]'));}catch(e){}
- out.push({id:String(vals[r][ci.id]||''),type:String(vals[r][ci.type]||''),label:String(vals[r][ci.label]||''),full:ci.full>=0?String(vals[r][ci.full]||''):'',grade:ci.grade>=0?String(vals[r][ci.grade]||''):'',gnum:ci.gnum>=0?Number(vals[r][ci.gnum]||0):0,adviser:ci.adviser>=0?String(vals[r][ci.adviser]||''):'',section:ci.section>=0?String(vals[r][ci.section]||''):'',grid:grid});}
- return {schedules:out};
+    var vals = scheduleSheet().getDataRange().getValues();
+    if (vals.length < 2) return { schedules: [] };
+    var h = vals[0].map(function (x) { return String(x || '').trim().toLowerCase(); });
+    function c(n) { return h.indexOf(n.toLowerCase()); }
+    var ci = { id:c('id'), type:c('type'), label:c('label'), full:c('full'), grade:c('grade'), gnum:c('gnum'), adviser:c('adviser'), section:c('section'), grid:c('gridJson') };
+    if (ci.id < 0 || ci.type < 0 || ci.label < 0 || ci.grid < 0) throw httpError('Schedules sheet headers are invalid. Import the supplied private CSV.', 'CONFIG');
+    var out = [];
+    for (var r = 1; r < vals.length; r++) {
+        if (!String(vals[r][ci.id] || '').trim()) continue;
+        var grid = [];
+        try { grid = JSON.parse(String(vals[r][ci.grid] || '[]')); } catch (e) { grid = []; }
+        out.push({ id:String(vals[r][ci.id] || ''), type:String(vals[r][ci.type] || ''), label:String(vals[r][ci.label] || ''), full:ci.full >= 0 ? String(vals[r][ci.full] || '') : '', grade:ci.grade >= 0 ? String(vals[r][ci.grade] || '') : '', gnum:ci.gnum >= 0 ? Number(vals[r][ci.gnum] || 0) : 0, adviser:ci.adviser >= 0 ? String(vals[r][ci.adviser] || '') : '', section:ci.section >= 0 ? String(vals[r][ci.section] || '') : '', grid:grid });
+    }
+    return { schedules: out };
 }
 
 var PRESENCE_HEADERS = ['username', 'lastSeen'];
@@ -815,16 +862,29 @@ function hmacHex(message, key) {
     return toHex(Utilities.computeHmacSha256Signature(message, key));
 }
 function bootstrapRandomHex(nBytes) {
-    nBytes = nBytes || 32; var out = '';
-    while (out.length < nBytes * 2) out += toHex(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + ':' + new Date().getTime() + ':' + Utilities.getUuid()));
+    nBytes = nBytes || 32;
+    var out = '';
+    while (out.length < nBytes * 2) {
+        out += toHex(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + ':' + new Date().getTime() + ':' + Utilities.getUuid()));
+    }
     return out.slice(0, nBytes * 2);
 }
-function sessionSecret() { var v = prop('SESSION_SECRET', ''); if (!v || v.length < 32) throw httpError('SESSION_SECRET is missing or too short. Run oneClickSetup() and redeploy.', 'CONFIG'); return v; }
-function pepperSecret() { var v = prop('PEPPER', ''); if (!v || v.length < 32) throw httpError('PEPPER is missing or too short. Run oneClickSetup() and reseed passwords.', 'CONFIG'); return v; }
+function sessionSecret() {
+    var v = prop('SESSION_SECRET', '');
+    if (!v || v.length < 32) throw httpError('SESSION_SECRET is missing or too short. Run oneClickSetup() and redeploy.', 'CONFIG');
+    return v;
+}
+function pepperSecret() {
+    var v = prop('PEPPER', '');
+    if (!v || v.length < 32) throw httpError('PEPPER is missing or too short. Run oneClickSetup() and reseed passwords.', 'CONFIG');
+    return v;
+}
 function assertCoreConfig() {
     if (!prop('SHEET_ID', '')) throw httpError('SHEET_ID is not configured.', 'CONFIG');
-    sessionSecret(); pepperSecret();
-    var reg = prop('REG_CODE', ''); if (!reg || reg.length < 8) throw httpError('REG_CODE is missing or too short.', 'CONFIG');
+    sessionSecret();
+    pepperSecret();
+    var reg = prop('REG_CODE', '');
+    if (!reg || reg.length < 8) throw httpError('REG_CODE is missing or too short.', 'CONFIG');
 }
 // Cryptographic-strength random hex WITHOUT relying on Math.random().
 // Apps Script has no crypto.getRandomValues, so we mix several platform UUIDs
@@ -994,24 +1054,46 @@ function findUser(username) {
     }
     return null;
 }
-function loginAttemptKey(username) { return 'LOGIN_' + String(username || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40); }
-function loginAttemptState(username) { var n = parseInt(CacheService.getScriptCache().get(loginAttemptKey(username)) || '0', 10); return isNaN(n) ? 0 : n; }
-function recordLoginFailure(username) { var n = loginAttemptState(username) + 1; CacheService.getScriptCache().put(loginAttemptKey(username), String(n), 900); return n; }
+function loginAttemptKey(username) {
+    return 'LOGIN_' + String(username || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40);
+}
+function loginAttemptState(username) {
+    var raw = CacheService.getScriptCache().get(loginAttemptKey(username));
+    var n = parseInt(raw || '0', 10);
+    return isNaN(n) ? 0 : n;
+}
+function recordLoginFailure(username) {
+    var n = loginAttemptState(username) + 1;
+    CacheService.getScriptCache().put(loginAttemptKey(username), String(n), 900);
+    return n;
+}
 function clearLoginFailures(username) { CacheService.getScriptCache().remove(loginAttemptKey(username)); }
 function handleLogin(p) {
-    if (secIsLocked()) throw httpError('The website has been locked by an administrator.', 'LOCKED');
-    var username = String(p.username || '').trim(), max = Math.max(3, Math.min(secMaxAttempts(), 20)), prior = loginAttemptState(username);
-    if (prior >= max) throw httpError('Too many attempts for this account. Wait 15 minutes and try again.', 'RATE_LIMIT');
-    var u = findUser(username), candidate = hashPassword(String(p.password || ''), u ? u.salt : 'nosalt');
+    if (secIsLocked())
+        throw httpError('The website has been locked by an administrator.', 'LOCKED');
+    var username = String(p.username || '').trim();
+    var max = Math.max(3, Math.min(secMaxAttempts(), 20));
+    var prior = loginAttemptState(username);
+    if (prior >= max)
+        throw httpError('Too many attempts for this account. Wait 15 minutes and try again.', 'RATE_LIMIT');
+    var u = findUser(username);
+    var candidate = hashPassword(String(p.password || ''), u ? u.salt : 'nosalt');
     if (!u || !constantTimeEquals(candidate, u.hash)) {
-        var fails = recordLoginFailure(username), left = Math.max(0, max - fails);
+        var fails = recordLoginFailure(username);
+        var left = Math.max(0, max - fails);
         throw httpError(left ? ('Incorrect username or password. ' + left + ' attempt' + (left === 1 ? '' : 's') + ' left temporarily.') : 'Too many attempts for this account. Wait 15 minutes and try again.', left ? 'AUTH' : 'RATE_LIMIT');
     }
     clearLoginFailures(username);
     var deviceId = String(p.deviceId || '').trim();
-    if (deviceId && isTrustedDevice(u.username, deviceId)) return issueSession(u);
-    if (!u.email) return { twofa: 'email_required' };
-    sendTwoFactorCode(u, deviceId); return { twofa: 'code_sent', emailMasked: maskEmail(u.email) };
+    if (deviceId && isTrustedDevice(u.username, deviceId)) {
+        var trustedSession = issueSession(u);
+        trustedSession.remembered = true;
+        return trustedSession;
+    }
+    if (!u.email)
+        return { twofa: 'email_required' };
+    sendTwoFactorCode(u, deviceId);
+    return { twofa: 'code_sent', emailMasked: maskEmail(u.email) };
 }
 function issueSession(u) {
     var safe = { username: u.username, name: u.name, role: u.role };
@@ -1020,11 +1102,27 @@ function issueSession(u) {
     return { token: token, user: safe };
 }
 function readTrustedDevices(username) {
-    var raw = prop('DEV_' + String(username).toLowerCase(), ''); if (!raw) return [];
-    try { var a = JSON.parse(raw); if (!Array.isArray(a)) return []; var now = Date.now(); return a.map(function(x){return typeof x === 'string' ? {id:x,exp:0}:x;}).filter(function(x){return x && x.id && x.exp && x.exp > now;}); } catch(e){ return []; }
+    var raw = prop('DEV_' + String(username).toLowerCase(), '');
+    if (!raw) return [];
+    try {
+        var a = JSON.parse(raw);
+        if (!Array.isArray(a)) return [];
+        var now = Date.now();
+        return a.map(function (x) { return typeof x === 'string' ? { id: x, exp: 0 } : x; })
+            .filter(function (x) { return x && x.id && x.exp && x.exp > now; });
+    } catch (e) { return []; }
 }
-function isTrustedDevice(username, deviceId) { return !!deviceId && readTrustedDevices(username).some(function(x){ return constantTimeEquals(x.id, deviceId); }); }
-function trustDevice(username, deviceId) { if(!deviceId)return; var list=readTrustedDevices(username).filter(function(x){return x.id!==deviceId;}); list.push({id:deviceId,exp:Date.now()+30*86400000}); while(list.length>10)list.shift(); props().setProperty('DEV_'+String(username).toLowerCase(),JSON.stringify(list)); }
+function isTrustedDevice(username, deviceId) {
+    if (!deviceId) return false;
+    return readTrustedDevices(username).some(function (x) { return constantTimeEquals(x.id, deviceId); });
+}
+function trustDevice(username, deviceId) {
+    if (!deviceId) return;
+    var list = readTrustedDevices(username).filter(function (x) { return x.id !== deviceId; });
+    list.push({ id: deviceId, exp: Date.now() + 30 * 86400000 });
+    while (list.length > 10) list.shift();
+    props().setProperty('DEV_' + String(username).toLowerCase(), JSON.stringify(list));
+}
 function maskEmail(e) {
     e = String(e || '');
     var at = e.indexOf('@');
@@ -1034,7 +1132,8 @@ function maskEmail(e) {
     return name.charAt(0) + (name.length > 2 ? '***' : '*') + dom;
 }
 function sendTwoFactorCode(u, deviceId) {
-    var throttleKey = 'TFA_SEND_' + String(u.username).toLowerCase(), cache = CacheService.getScriptCache();
+    var throttleKey = 'TFA_SEND_' + String(u.username).toLowerCase();
+    var cache = CacheService.getScriptCache();
     if (cache.get(throttleKey)) throw httpError('Please wait one minute before requesting another code.', 'RATE_LIMIT');
     cache.put(throttleKey, '1', 60);
     var code = secureCode6();
@@ -2166,7 +2265,7 @@ var SHARE_HEADERS = ['token','type','title','bodyClass','full','html','createdBy
 // tags, inline on* event handlers, and javascript:/vbscript:/non-image data:
 // URLs. Regex sanitizing is not a full HTML parser, so keep shared content
 // limited to the app's own formatted output.
-function shareEnabled(){return prop('PUBLIC_SHARING_ENABLED','').toLowerCase()==='true';}
+function shareEnabled() { return prop('PUBLIC_SHARING_ENABLED', '').toLowerCase() === 'true'; }
 function sanitizeShareHtml(html) {
     var s = String(html || '');
     s = s.replace(/<\s*(script|style|iframe|object|embed|template|noscript)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
@@ -2178,7 +2277,7 @@ function sanitizeShareHtml(html) {
     s = s.replace(/(href|src|xlink:href)\s*=\s*'(\s*(?:javascript|vbscript)\s*:)[^']*'/gi, "$1='#'");
     s = s.replace(/(href|src|xlink:href)\s*=\s*"(\s*data:(?!image\/)[^"]*)"/gi, '$1="#"');
     s = s.replace(/(href|src|xlink:href)\s*=\s*'(\s*data:(?!image\/)[^']*)'/gi, "$1='#'");
-    s=s.replace(/(href|src|xlink:href)\s*=\s*([^\s"'`=<>]+)/gi,function(_,a,v){return /^(?:javascript|vbscript|data):/i.test(v.trim())?a+'="#"':a+'="'+v.replace(/["<>]/g,'')+'"';});
+    s = s.replace(/(href|src|xlink:href)\s*=\s*([^\s"'`=<>]+)/gi, function(_, a, v) { return /^(?:javascript|vbscript|data):/i.test(v.trim()) ? a + '="#"' : a + '="' + v.replace(/["<>]/g, '') + '"'; });
     return s;
 }
 function shareSheet(){ return sheetOrCreate('Shares', SHARE_HEADERS); }
@@ -2187,7 +2286,7 @@ function shareCols(values){
     return { token: head.indexOf('token'), type: head.indexOf('type'), title: head.indexOf('title'), bodyClass: head.indexOf('bodyclass'), full: head.indexOf('full'), html: head.indexOf('html'), createdBy: head.indexOf('createdby'), createdAt: head.indexOf('createdat'), expiresAt: head.indexOf('expiresat'), revoked: head.indexOf('revoked') };
 }
 function handleCreateShare(session, p){
-    if(!shareEnabled())throw httpError('Public sharing is disabled by default.','FORBIDDEN');
+    if (!shareEnabled()) throw httpError('Public sharing is disabled by default. Use an approved secure document channel.', 'FORBIDDEN');
     var type = String(p.type || '').trim();
     var allowed = { record:1, incident:1, classlist:1, evaluation:1 };
     if(!allowed[type]) throw httpError('Unknown document type.', 'BAD_REQUEST');
@@ -2220,7 +2319,7 @@ function handleCreateShare(session, p){
     return { token: token, expiresAt: exp.toISOString() };
 }
 function handleGetShared(p){
-    if(!shareEnabled())throw httpError('Public sharing is disabled.','GONE');
+    if (!shareEnabled()) throw httpError('Public sharing is disabled.', 'GONE');
     var token = String(p.token||'').trim();
     if(!token) throw httpError('This link is invalid.', 'NOT_FOUND');
     var sh = shareSheet();

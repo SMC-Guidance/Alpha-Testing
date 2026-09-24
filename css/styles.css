@@ -1872,5 +1872,6 @@ html.share-mode,html.share-mode body{background:#eef2f9;height:100%;margin:0}
   .ri-date-in{flex:1 1 120px;min-width:0;}
 }
 
+/* Security hardening build: accessibility defaults */
 :focus-visible{outline:3px solid #2783DE;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}

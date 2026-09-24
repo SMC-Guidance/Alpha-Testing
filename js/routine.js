@@ -17,17 +17,17 @@ SMC.routine = (function () {
 	var records = load();
 
 	function esc(s) { return (ui && ui.esc) ? ui.esc(s) : String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
-	function load(){return {};}
-	function save(){}
+	function load() { return {}; }
+	function save() { }
 	function recOf(lrn) { var r = records[lrn] || {}; return { status: r.status || "Pending", date: r.date || "", notes: r.notes || "", dropout: r.dropout === true }; }
 	function setRec(lrn, patch) { var r = recOf(lrn); if (patch.status != null) r.status = patch.status; if (patch.date != null) r.date = patch.date; if (patch.notes != null) r.notes = patch.notes; if (patch.dropout != null) r.dropout = !!patch.dropout; records[lrn] = r; save(); }
 	function persist(lrn) {
 		save();
-		if (!(SMC.api && SMC.api.saveRoutine)) { if(ui&&ui.toast)ui.toast("Online saving is unavailable.","err"); return; }
+		if (!(SMC.api && SMC.api.saveRoutine)) { if (ui && ui.toast) ui.toast("Online saving is unavailable.", "err"); return; }
 		var r = recOf(lrn);
 		SMC.api.saveRoutine({ lrn: lrn, status: r.status, date: r.date, notes: r.notes, dropout: r.dropout })
 			.then(function () { if (ui && ui.toast) ui.toast("Saved online.", "ok"); })
-			.catch(function(){if(ui&&ui.toast)ui.toast("Could not save online. Your change was not persisted.","err");fetchRemote();});
+			.catch(function () { if (ui && ui.toast) ui.toast("Could not save online. Your change was not persisted.", "err"); fetchRemote(); });
 	}
 	function fetchRemote() {
 		if (!(SMC.api && SMC.api.listRoutine)) return;

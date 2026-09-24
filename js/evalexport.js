@@ -454,13 +454,7 @@ SMC.evalexport = (function () {
             document.getElementById('epPanel-folder') ||
             document.getElementById('evalProcMount');
         if (!host) return false;
-        if (document.getElementById('exCard')) {
-            // The card may have auto-mounted before authentication, when these
-            // requests fail. Refresh whenever the signed-in user opens the view.
-            loadBatches();
-            loadSaved();
-            return true;
-        }
+        if (document.getElementById('exCard')) return true;
 
         var wrap = document.createElement('div');
         wrap.innerHTML = template();

@@ -1,21 +1,51 @@
 "use strict";
 window.SMC = window.SMC || {};
 SMC.api = (function () {
-    // Session tokens are tab-scoped and clear when the browser session closes.
+    // Normal sessions remain tab-scoped. If the user explicitly checks
+    // “Remember this device”, keep the signed session in localStorage so it can
+    // survive closing and reopening the browser (the server still enforces the
+    // configured SESSION_TTL_H expiry).
     var TOKEN_KEY = 'smc_token';
+    var REMEMBER_KEY = 'smc_remember_login';
+    function remembered() { try {
+        return localStorage.getItem(REMEMBER_KEY) === '1';
+    } catch (e) { return false; } }
     function getToken() { try {
-        return sessionStorage.getItem(TOKEN_KEY) || null;
+        return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || null;
     }
     catch (e) {
         return null;
     } }
-    function setToken(t) { try {
-        t ? sessionStorage.setItem(TOKEN_KEY, t) : sessionStorage.removeItem(TOKEN_KEY);
+    function setToken(t, persist) { try {
+        if (!t) {
+            sessionStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(TOKEN_KEY);
+            return;
+        }
+        var keep = (persist === undefined) ? remembered() : !!persist;
+        if (keep) {
+            localStorage.setItem(TOKEN_KEY, t);
+            localStorage.setItem(REMEMBER_KEY, '1');
+            sessionStorage.removeItem(TOKEN_KEY);
+        } else {
+            sessionStorage.setItem(TOKEN_KEY, t);
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(REMEMBER_KEY);
+        }
     }
     catch (e) { } }
     function clearToken() { setToken(null); }
     function deviceId() {
-        try { var d=localStorage.getItem('smc_device'); if(!d){var b=new Uint8Array(24);crypto.getRandomValues(b);d=Array.prototype.map.call(b,function(x){return ('0'+x.toString(16)).slice(-2);}).join('');localStorage.setItem('smc_device',d);}return d; } catch(e){return '';}
+        try {
+            var d = localStorage.getItem('smc_device');
+            if (!d) {
+                var bytes = new Uint8Array(24);
+                crypto.getRandomValues(bytes);
+                d = Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+                localStorage.setItem('smc_device', d);
+            }
+            return d;
+        } catch (e) { return ''; }
     }
     function call(action, payload) {
         var url = (SMC.config && SMC.config.apiUrl) || '';
@@ -120,14 +150,14 @@ SMC.api = (function () {
         login: function (username, password) {
             return call('login', { username: username, password: password, deviceId: deviceId() }).then(function (d) {
                 if (d && d.token)
-                    setToken(d.token);
+                    setToken(d.token, !!d.remembered);
                 return d;
             });
         },
         verify2fa: function (username, password, code, remember) {
             return call('verify2fa', { username: username, password: password, code: code, deviceId: deviceId(), remember: !!remember }).then(function (d) {
                 if (d && d.token)
-                    setToken(d.token);
+                    setToken(d.token, !!remember);
                 return d;
             });
         },

@@ -7,7 +7,7 @@ SMC.classlists = (function () {
 	var FLAGS = ["Behavior", "Academic", "Close Monitoring"];
 	var LEVEL_ORDER = ["Kinder", "Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6", "Grade 7", "Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12"];
 	var localFlags = {};
-	var rosterLoaded=false, rosterLoading=null, rosterError="";
+	var rosterLoaded = false, rosterLoading = null, rosterError = "";
 	var PALETTE = ["#002B6B", "#2F6DB5", "#2A9D8F", "#3E8E5A", "#BFA050", "#D98324", "#C94040", "#C65A93", "#7A5AA8", "#5B6B85"];
 	var colors = loadColors();
 	function loadColors() { try { return JSON.parse(localStorage.getItem("smc-classcolors") || "{}") || {}; } catch (e) { return {}; } }
@@ -54,8 +54,23 @@ SMC.classlists = (function () {
 		setTimeout(function () { document.addEventListener("click", outsidePalette); }, 0);
 	}
 
-	function loadRoster(){if(!user||!(api&&api.listClassLists))return Promise.resolve([]);if(rosterLoading)return rosterLoading;rosterLoading=api.listClassLists().then(function(d){SMC.classListData=(d&&d.sections)||[];rosterLoaded=true;rosterLoading=null;var h=host();if(h&&h.querySelector(".cl-loading"))render();return SMC.classListData;}).catch(function(e){rosterLoading=null;rosterError=(e&&e.message)||"Could not load class lists.";var h=host();if(h)h.innerHTML='<div class="cl-empty">'+esc(rosterError)+'</div>';throw e;});return rosterLoading;}
-	function setUser(u) { user=u; SMC.classListData=[];rosterLoaded=false;rosterLoading=null;if(u)loadRoster().catch(function(){});syncColors(); }
+	function loadRoster() {
+		if (!user || !(api && api.listClassLists)) return Promise.resolve([]);
+		if (rosterLoading) return rosterLoading;
+		rosterError = "";
+		rosterLoading = api.listClassLists().then(function (d) {
+			SMC.classListData = (d && d.sections) || [];
+			rosterLoaded = true; rosterLoading = null;
+			var h = host(); if (h && h.querySelector(".cl-loading")) render();
+			return SMC.classListData;
+		}).catch(function (e) {
+			rosterLoading = null; rosterError = (e && e.message) || "Could not load class lists.";
+			var h = host(); if (h) h.innerHTML = '<div class="cl-empty">' + esc(rosterError) + '</div>';
+			throw e;
+		});
+		return rosterLoading;
+	}
+	function setUser(u) { user = u; SMC.classListData = []; rosterLoaded = false; rosterLoading = null; if (u) loadRoster().catch(function(){}); syncColors(); }
 	function isStaff() { return !!(user && (user.role === "admin" || user.role === "co-admin")); }
 	function esc(s) {
 		if (ui && ui.esc) return ui.esc(s);
@@ -72,8 +87,8 @@ SMC.classlists = (function () {
 	}
 	function findByKey(k) { var d = data(); for (var i = 0; i < d.length; i++) { if (keyOf(d[i]) === k) return d[i]; } return null; }
 
-	function loadLocalFlags(){return {};}
-	function saveLocalFlags(){}
+	function loadLocalFlags() { return {}; }
+	function saveLocalFlags() { }
 	function effFlag(st) {
 		return { flag: st.flag || "", note: st.note || "" };
 	}
@@ -104,7 +119,9 @@ SMC.classlists = (function () {
 	function statusPill(s) { var c = (s === "NEW") ? "new" : "old"; return '<span class="cl-st cl-st-' + c + '">' + esc(s || "") + "</span>"; }
 
 	function render() {
-		var el=host();if(!el)return;if(!rosterLoaded){el.innerHTML='<div class="cl-empty cl-loading">Loading protected class lists…</div>';loadRoster().catch(function(){});return;}
+		var el = host();
+		if (!el) return;
+		if (!rosterLoaded) { el.innerHTML = '<div class="cl-empty cl-loading">Loading protected class lists…</div>'; loadRoster().catch(function(){}); return; }
 		el.innerHTML =
 			'<div class="cl-wrap">' +
 			'<header class="cl-head">' +
@@ -295,7 +312,12 @@ SMC.classlists = (function () {
 		saveBtn.onclick = function () {
 			var flag = document.getElementById("clModalFlag").value || "";
 			var note = document.getElementById("clModalNote").value || "";
-			if(!(api&&api.saveClassFlag))return;saveBtn.disabled=true;api.saveClassFlag({lrn:lrn,flag:flag,note:note}).then(function(){st.flag=flag;st.note=note;saveBtn.disabled=false;closeModal();if(ui&&ui.toast)ui.toast("Concern saved securely.","ok");drawRoster(sec);}).catch(function(e){saveBtn.disabled=false;if(ui&&ui.toast)ui.toast((e&&e.message)||"Could not save concern.","err");});
+			if (!(api && api.saveClassFlag)) return;
+			saveBtn.disabled = true;
+			api.saveClassFlag({ lrn: lrn, flag: flag, note: note }).then(function () {
+				st.flag = flag; st.note = note; saveBtn.disabled = false; closeModal();
+				if (ui && ui.toast) ui.toast("Concern saved securely.", "ok"); drawRoster(sec);
+			}).catch(function (e) { saveBtn.disabled = false; if (ui && ui.toast) ui.toast((e && e.message) || "Could not save concern.", "err"); });
 		};
 		m.classList.add("on");
 	}

@@ -3,13 +3,19 @@
 	var SMC = window.SMC = window.SMC || {};
 	var user = null;
 	var state = { mode: "teacher", q: "", selId: null };
-	var bound=false,loaded=false,loading=null,loadError="";
+	var bound = false, loaded = false, loading = null, loadError = "";
 
 	function host() { return document.getElementById("scheduleView"); }
 	function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 	function data() { return SMC.scheduleData || []; }
-	function loadData(){if(!user||!(SMC.api&&SMC.api.listSchedules))return Promise.resolve([]);if(loading)return loading;loading=SMC.api.listSchedules().then(function(d){SMC.scheduleData=(d&&d.schedules)||[];loaded=true;loading=null;if(host())render();return SMC.scheduleData;}).catch(function(e){loading=null;loadError=(e&&e.message)||"Could not load schedules.";if(host())host().innerHTML='<div class="sch-detail-empty">'+esc(loadError)+'</div>';throw e;});return loading;}
-	function setUser(u){user=u;SMC.scheduleData=[];loaded=false;loading=null;if(u)loadData().catch(function(){});}
+	function loadData() {
+		if (!user || !(SMC.api && SMC.api.listSchedules)) return Promise.resolve([]);
+		if (loading) return loading;
+		loading = SMC.api.listSchedules().then(function (d) { SMC.scheduleData = (d && d.schedules) || []; loaded = true; loading = null; if (host()) render(); return SMC.scheduleData; })
+			.catch(function (e) { loading = null; loadError = (e && e.message) || "Could not load schedules."; if (host()) host().innerHTML = '<div class="sch-detail-empty">' + esc(loadError) + '</div>'; throw e; });
+		return loading;
+	}
+	function setUser(u) { user = u; SMC.scheduleData = []; loaded = false; loading = null; if (u) loadData().catch(function(){}); }
 
 	function list() {
 		var q = state.q.trim().toLowerCase();
@@ -141,7 +147,10 @@
 
 	function refresh() { drawList(); drawDetail(); }
 
-	function render(){var el=host();if(!el)return;if(!loaded){el.innerHTML='<div class="sch-detail-empty">Loading protected schedules…</div>';loadData().catch(function(){});return;}
+	function render() {
+		var el = host();
+		if (!el) return;
+		if (!loaded) { el.innerHTML = '<div class="sch-detail-empty">Loading protected schedules…</div>'; loadData().catch(function(){}); return; }
 		var tCount = data().filter(function (r) { return r.type === "teacher"; }).length;
 		var sCount = data().filter(function (r) { return r.type === "section"; }).length;
 		el.innerHTML =
@@ -183,5 +192,5 @@
 		});
 	}
 
-	SMC.schedule = { render:render, setUser:setUser, load:loadData };
+	SMC.schedule = { render: render, setUser: setUser, load: loadData };
 })();
