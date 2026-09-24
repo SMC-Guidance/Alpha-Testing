@@ -1,6 +1,6 @@
 /* SMC Guidance Center - service worker (PWA app shell) */
 "use strict";
-var CACHE = 'smc-guidance-v10-secure-20260923';
+var CACHE = 'smc-guidance-v11-hotfix-20260924';
 var CORE = [
   './',
   './index.html',
@@ -86,7 +86,23 @@ self.addEventListener('fetch', function (e) {
     return;
   }
 
-  // Static assets: cache-first, then network (and cache the result).
+  // Scripts and styles are network-first so a security or deployment fix is
+  // never hidden behind an old service-worker copy. Offline use still falls
+  // back to the cache.
+  if (/\.(?:js|css)$/.test(url.pathname)) {
+    e.respondWith(
+      fetch(req).then(function (res) {
+        if (res && res.status === 200 && res.type === 'basic') {
+          var copy = res.clone();
+          caches.open(CACHE).then(function (c) { c.put(req, copy); });
+        }
+        return res;
+      }).catch(function () { return caches.match(req); })
+    );
+    return;
+  }
+
+  // Other static assets: cache-first, then network.
   e.respondWith(
     caches.match(req).then(function (cached) {
       if (cached) return cached;
