@@ -288,6 +288,41 @@ function evalIsAdviser(teacher, section) {
     return false;
 }
 
+/** Normalize record content for duplicate-response detection. */
+function evalSignatureText(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Build a source-independent signature from all response content.  Sorting
+ * student and comment rows lets a Form and its linked Sheet compare equal even
+ * when Google returns them in a different order.
+ */
+function evalRecordSignature(record) {
+    var students = (record.students || []).map(function (student) {
+        var scores = (student.scores || []).map(function (score) {
+            return score === null || score === undefined ? '' : String(score);
+        });
+        return evalSignatureText(student.name) + '|' + scores.join(',');
+    }).sort();
+
+    var comments = (record.commentGroups || []).map(function (group) {
+        var lines = (group.lines || []).map(evalSignatureText).sort();
+        return evalSignatureText(group.question) + '|' + lines.join('~');
+    }).sort();
+
+    return [
+        evalSignatureText(record.teacher),
+        evalSignatureText(record.subject),
+        evalSignatureText(record.section),
+        String(record.grade),
+        evalSignatureText(record.templateKey),
+        students.join('||'),
+        comments.join('||')
+    ].join('###');
+}
+
 /**
  * @param {{name:string, headers:Array, rows:Array}} table
  * @param {boolean} skipAdviserLookup  true when running outside Apps Script
@@ -671,6 +706,10 @@ function handleBuildEvalWorkbooks(session, p) {
     for (var b = 0; b < batches.length; b++) {
         var batch = batches[b];
         var byTemplate = {};
+        // The same response table can be reached through a Form, its linked
+        // Sheet, a Drive shortcut, or a link-index file.  Entry IDs/names are
+        // therefore not sufficient for deduplication; compare built content.
+        var seenRecordSignatures = {};
 
         if (!p.folderId && (Date.now() - buildStarted) > EVAL_BUILD_BUDGET_MS) {
             for (var rb = b; rb < batches.length; rb++) {
@@ -696,6 +735,19 @@ function handleBuildEvalWorkbooks(session, p) {
                 var built = evalBuildRecord(tables[ti], false);
                 if (built.note) notes.push(built.note);
                 if (!built.ok) continue;
+
+                var signature = evalRecordSignature(built.record);
+                if (seenRecordSignatures[signature]) {
+                    var first = seenRecordSignatures[signature];
+                    notes.push('Ignored duplicate response source “' + built.record.source +
+                        '”; it contains the same ' + built.record.students.length +
+                        ' responses as “' + first.source + '”.');
+                    continue;
+                }
+                seenRecordSignatures[signature] = {
+                    source: built.record.source,
+                    responses: built.record.students.length
+                };
 
                 var key = built.record.templateKey;
                 if (!byTemplate[key]) byTemplate[key] = [];
