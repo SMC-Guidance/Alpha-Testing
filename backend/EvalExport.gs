@@ -288,6 +288,36 @@ function evalIsAdviser(teacher, section) {
     return false;
 }
 
+/** Normalize record content for duplicate-response detection. */
+function evalSignatureText(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Signature based on the evaluation identity and actual rating rows only.
+ * A linked response Sheet can contain extra Timestamp/Email/comment columns
+ * that FormApp does not return, so comments must not decide whether the same
+ * 14 rating responses are counted a second time.
+ */
+function evalRecordSignature(record) {
+    var students = (record.students || []).map(function (student) {
+        var scores = (student.scores || []).map(function (score) {
+            return score === null || score === undefined ? '' : String(score);
+        });
+        return evalSignatureText(student.name) + '|' + scores.join(',');
+    }).sort();
+
+    var section = evalSignatureText(record.section)
+        .replace(/^class adviser\s*-?\s*/, '')
+        .replace(/[^a-z0-9]+/g, '');
+    var subject = evalSignatureText(record.subject).replace(/[^a-z0-9]+/g, '');
+    var teacher = evalNameKey(record.teacher);
+
+    return [teacher, subject, section, String(record.grade),
+        evalSignatureText(record.templateKey), students.join('||')].join('###');
+}
+
 /**
  * @param {{name:string, headers:Array, rows:Array}} table
  * @param {boolean} skipAdviserLookup  true when running outside Apps Script
@@ -671,6 +701,7 @@ function handleBuildEvalWorkbooks(session, p) {
     for (var b = 0; b < batches.length; b++) {
         var batch = batches[b];
         var byTemplate = {};
+        var seenRecordSignatures = {};
 
         if (!p.folderId && (Date.now() - buildStarted) > EVAL_BUILD_BUDGET_MS) {
             for (var rb = b; rb < batches.length; rb++) {
@@ -697,6 +728,14 @@ function handleBuildEvalWorkbooks(session, p) {
                 if (built.note) notes.push(built.note);
                 if (!built.ok) continue;
 
+                var signature = evalRecordSignature(built.record);
+                if (seenRecordSignatures[signature]) {
+                    notes.push('Ignored duplicate response source “' + built.record.source +
+                        '”; it contains the same ' + built.record.students.length +
+                        ' responses as “' + seenRecordSignatures[signature].source + '”.');
+                    continue;
+                }
+                seenRecordSignatures[signature] = { source: built.record.source };
                 var key = built.record.templateKey;
                 if (!byTemplate[key]) byTemplate[key] = [];
                 byTemplate[key].push(built.record);
@@ -705,10 +744,10 @@ function handleBuildEvalWorkbooks(session, p) {
 
         for (var tk in byTemplate) {
             var records = byTemplate[tk];
-            records.sort(function (x, y) {
-                if (x.grade !== y.grade) return x.grade - y.grade;
-                return x.section < y.section ? -1 : (x.section > y.section ? 1 : 0);
-            });
+            // Requested workbook order: within each grade, group TLE tabs
+            // first (A, B, C, D), then ICT tabs (A, B, C, D). Other subjects
+            // follow alphabetically, with their sections also A onward.
+            records.sort(evalCompareRecordsForTabs);
 
             var teacherLabel = batch.name;
             if (!teacherLabel) {
@@ -880,6 +919,32 @@ function evalSubjectAcronym(subject) {
     var acr = '';
     for (var w = 0; w < words.length; w++) acr += words[w].charAt(0);
     return acr;
+}
+
+/** Sort generated tabs by grade, then subject group, then section letter. */
+function evalCompareRecordsForTabs(a, b) {
+    var ag = Number(a.grade || 0), bg = Number(b.grade || 0);
+    if (ag !== bg) return ag - bg;
+
+    function subjectKey(record) {
+        var subject = evalSubjectAcronym(record.subject);
+        if (subject === 'TLE') return '00-TLE';
+        if (subject === 'ICT') return '01-ICT';
+        return '10-' + subject;
+    }
+    var as = subjectKey(a), bs = subjectKey(b);
+    if (as !== bs) return as < bs ? -1 : 1;
+
+    function sectionKey(record) {
+        var letter = evalSectionLetter(record.grade, record.section, null);
+        return letter || evalSectionKey(record.section);
+    }
+    var al = sectionKey(a), bl = sectionKey(b);
+    if (al !== bl) return al < bl ? -1 : 1;
+
+    var ax = evalSignatureText(a.section), bx = evalSignatureText(b.section);
+    if (ax !== bx) return ax < bx ? -1 : 1;
+    return evalSignatureText(a.source) < evalSignatureText(b.source) ? -1 : 1;
 }
 
 /** Builds the sheet name for one section. */
@@ -1089,14 +1154,20 @@ function evalFillSheet(sheet, spec, record, notes) {
     sheet.getRange('B4').setValue(record.section);
 
     var capacity = spec.lastCol - spec.firstCol + 1;
+
+    // A template can look blank while still containing old values in hidden or
+    // formatted student cells. Clear every score input slot before writing the
+    // current Form responses. clearContent preserves all template formatting.
+    for (var clearRow = 0; clearRow < spec.rows.length; clearRow++) {
+        sheet.getRange(spec.rows[clearRow], spec.firstCol, 1, capacity).clearContent();
+    }
+
     var students = record.students;
     if (students.length > capacity) {
         notes.push(record.source + ': ' + students.length + ' responses exceed the '
             + spec.label + ' template capacity of ' + capacity + ' columns. Extra responses were left out.');
         students = students.slice(0, capacity);
     }
-    if (!students.length) return;
-
     // One batched write per question row keeps this fast on big folders.
     for (var r = 0; r < spec.rows.length; r++) {
         var rowValues = [], hasValue = false;
@@ -1113,6 +1184,12 @@ function evalFillSheet(sheet, spec, record, notes) {
             sheet.getRange(spec.rows[r], spec.firstCol, 1, rowValues.length).setValues([rowValues]);
         }
     }
+
+    // Hide unused student slots instead of deleting them. This gives the same
+    // clean view while preserving the template's AVERAGES column and formulas.
+    sheet.showColumns(spec.firstCol, capacity);
+    var unused = capacity - students.length;
+    if (unused > 0) sheet.hideColumns(spec.firstCol + students.length, unused);
 }
 
 /** COMMENTS SUMMARY tab, in the required arrangement. */

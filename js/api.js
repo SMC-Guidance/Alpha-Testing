@@ -1,18 +1,31 @@
 "use strict";
 window.SMC = window.SMC || {};
 SMC.api = (function () {
-    // Session tokens are tab-scoped and clear when the browser session closes.
+    // Normal sessions are tab-scoped. “Remember this device” stores a
+    // server-limited seven-day session that survives reopening the browser.
     var TOKEN_KEY = 'smc_token';
+    var REMEMBER_KEY = 'smc_remember_login';
+    function remembered() { try { return localStorage.getItem(REMEMBER_KEY) === '1'; } catch (e) { return false; } }
     function getToken() { try {
-        return sessionStorage.getItem(TOKEN_KEY) || null;
-    }
-    catch (e) {
-        return null;
-    } }
-    function setToken(t) { try {
-        t ? sessionStorage.setItem(TOKEN_KEY, t) : sessionStorage.removeItem(TOKEN_KEY);
-    }
-    catch (e) { } }
+        return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || null;
+    } catch (e) { return null; } }
+    function setToken(t, persist) { try {
+        if (!t) {
+            sessionStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(TOKEN_KEY);
+            return;
+        }
+        var keep = (persist === undefined) ? remembered() : !!persist;
+        if (keep) {
+            localStorage.setItem(TOKEN_KEY, t);
+            localStorage.setItem(REMEMBER_KEY, '1');
+            sessionStorage.removeItem(TOKEN_KEY);
+        } else {
+            sessionStorage.setItem(TOKEN_KEY, t);
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(REMEMBER_KEY);
+        }
+    } catch (e) { } }
     function clearToken() { setToken(null); }
     function deviceId() {
         try { var d=localStorage.getItem('smc_device'); if(!d){var b=new Uint8Array(24);crypto.getRandomValues(b);d=Array.prototype.map.call(b,function(x){return ('0'+x.toString(16)).slice(-2);}).join('');localStorage.setItem('smc_device',d);}return d; } catch(e){return '';}
@@ -120,14 +133,14 @@ SMC.api = (function () {
         login: function (username, password) {
             return call('login', { username: username, password: password, deviceId: deviceId() }).then(function (d) {
                 if (d && d.token)
-                    setToken(d.token);
+                    setToken(d.token, !!d.remembered);
                 return d;
             });
         },
         verify2fa: function (username, password, code, remember) {
             return call('verify2fa', { username: username, password: password, code: code, deviceId: deviceId(), remember: !!remember }).then(function (d) {
                 if (d && d.token)
-                    setToken(d.token);
+                    setToken(d.token, !!remember);
                 return d;
             });
         },
@@ -160,6 +173,11 @@ SMC.api = (function () {
         diagnoseEvalFolder: function () { return call('diagnoseEvalFolder', {}); },
         listGeneratedEvals: function () { return call('listGeneratedEvals', {}); },
         getFormResponses: function (fileId) { return call('getFormResponses', { fileId: fileId }); },
+        saveK2Batch: function (data) { return call('saveK2Batch', data || {}); },
+        listK2Batches: function (filters) { return call('listK2Batches', filters || {}); },
+        deleteK2Batch: function (id) { return call('deleteK2Batch', { id: id }); },
+        compileK2BatchPdf: function (id) { return call('compileK2BatchPdf', { id: id }); },
+        buildK2ManualResults: function (id) { return call('buildK2ManualResults', { id: id }); },
         getMaintenance: function () { return call('getMaintenance', {}); },
         setMaintenance: function (view, on) { return call('setMaintenance', { view: view, on: !!on }); },
         getProfile: function () { return call('getProfile', {}); },

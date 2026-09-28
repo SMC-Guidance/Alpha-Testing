@@ -1,6 +1,6 @@
 /* SMC Guidance Center - service worker (PWA app shell) */
 "use strict";
-var CACHE = 'smc-guidance-v10-secure-20260923';
+var CACHE = 'smc-alpha-larger-welcome-full-evaluation-tour-20260928';
 var CORE = [
   './',
   './index.html',
@@ -10,6 +10,9 @@ var CORE = [
   './css/drive-folder.css',
   './css/classlists.css',
   './css/chat.css',
+  './css/pro-ui.css',
+  './css/topbar-only.css',
+  './css/themes.css',
   './js/config.js',
   './js/ui.js',
   './js/api.js',
@@ -21,8 +24,12 @@ var CORE = [
   './js/evaluations.js',
   './js/procedures.js',
   './js/evalproc.js',
+  './js/evalhub.js',
   './js/evalexport.js',
+  './js/k2manual.js',
   './css/eval-export.css',
+  './css/k2manual.css',
+  './css/evalhub.css',
   './js/evaltemplate.js',
   './js/evalbuild.js',
   './js/evaldash.js',
@@ -86,7 +93,18 @@ self.addEventListener('fetch', function (e) {
     return;
   }
 
-  // Static assets: cache-first, then network (and cache the result).
+  // Never hide code/configuration fixes behind an old cached script.
+  if (/\.(?:js|css)$/.test(url.pathname)) {
+    e.respondWith(fetch(req).then(function (res) {
+      if (res && res.status === 200 && res.type === 'basic') {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () { return caches.match(req); }));
+    return;
+  }
+  // Other static assets: cache-first, then network.
   e.respondWith(
     caches.match(req).then(function (cached) {
       if (cached) return cached;

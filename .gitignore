@@ -1,0 +1,6 @@
+.git/
+*.rar
+*.zip
+SMC-PRIVATE-*.csv
+exports/
+.DS_Store

@@ -89,16 +89,16 @@ function doPost(e) {
         if (session) {
             var liveUser = findUser(session.username);
             if (!liveUser) session = null;
-            else session = { username: liveUser.username, name: liveUser.name, role: liveUser.role, expiresAt: session.expiresAt };
+            else session = { username: liveUser.username, name: liveUser.name, role: liveUser.role, expiresAt: session.expiresAt, remembered: !!session.remembered };
         }
         // Sliding session: if the caller's token is more than halfway to expiry,
         // mint a fresh one and return it (via ok()) so active users stay signed
         // in instead of being logged out at the hard TTL.
         __renewToken = null;
         if (session && session.expiresAt) {
-            var _ttlMs = (parseInt(prop('SESSION_TTL_H', '4'), 10) || 4) * 3600 * 1000;
+            var _ttlMs = (session.remembered ? 168 : (parseInt(prop('SESSION_TTL_H', '4'), 10) || 4)) * 3600 * 1000;
             if ((session.expiresAt - Date.now()) < _ttlMs / 2) {
-                __renewToken = makeToken({ username: session.username, name: session.name, role: session.role });
+                __renewToken = makeToken({ username: session.username, name: session.name, role: session.role }, session.remembered);
             }
         }
         // Site-wide maintenance gate. Admins keep FULL access so they can work
@@ -143,6 +143,11 @@ function doPost(e) {
             case 'diagnoseEvalFolder': return ok(handleDiagnoseEvalFolder(requireStaff(session)));
             case 'listGeneratedEvals': return ok(handleListGeneratedEvals(requireStaff(session)));
             case 'getFormResponses': return ok(handleGetFormResponses(requireStaff(session), payload));
+            case 'saveK2Batch': return ok(handleSaveK2Batch(requireStaff(session), payload));
+            case 'listK2Batches': return ok(handleListK2Batches(requireStaff(session), payload));
+            case 'deleteK2Batch': return ok(handleDeleteK2Batch(requireStaff(session), payload));
+            case 'compileK2BatchPdf': return ok(handleCompileK2SavedBatchPdf(requireStaff(session), payload));
+            case 'buildK2ManualResults': return ok(handleBuildK2SavedBatchResults(requireStaff(session), payload));
             case 'getMaintenance': return ok(handleGetMaintenance(session));
             case 'setMaintenance': return ok(handleSetMaintenance(requireAdmin(session), payload));
             case 'getProfile': return ok(handleGetProfile(requireAuth(session)));
@@ -871,10 +876,10 @@ function constantTimeEquals(a, b) {
         diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
     return diff === 0;
 }
-function makeToken(user) {
-    var ttlH = parseInt(prop('SESSION_TTL_H', '4'), 10) || 4;
+function makeToken(user, remember) {
+    var ttlH = remember ? 168 : (parseInt(prop('SESSION_TTL_H', '4'), 10) || 4);
     var payload = {
-        u: user.username, n: user.name, r: user.role,
+        u: user.username, n: user.name, r: user.role, rem: !!remember,
         exp: Date.now() + ttlH * 3600 * 1000
     };
     var body = Utilities.base64EncodeWebSafe(JSON.stringify(payload));
@@ -898,7 +903,7 @@ function verifyToken(token) {
     }
     if (!payload || !payload.exp || Date.now() > payload.exp)
         return null;
-    return { username: payload.u, name: payload.n, role: payload.r, expiresAt: payload.exp };
+    return { username: payload.u, name: payload.n, role: payload.r, expiresAt: payload.exp, remembered: !!payload.rem };
 }
 function requireAuth(session) {
     if (!session)
@@ -1009,15 +1014,15 @@ function handleLogin(p) {
     }
     clearLoginFailures(username);
     var deviceId = String(p.deviceId || '').trim();
-    if (deviceId && isTrustedDevice(u.username, deviceId)) return issueSession(u);
+    if (deviceId && isTrustedDevice(u.username, deviceId)) return issueSession(u, true);
     if (!u.email) return { twofa: 'email_required' };
     sendTwoFactorCode(u, deviceId); return { twofa: 'code_sent', emailMasked: maskEmail(u.email) };
 }
-function issueSession(u) {
+function issueSession(u, remember) {
     var safe = { username: u.username, name: u.name, role: u.role };
-    var token = makeToken(safe);
+    var token = makeToken(safe, !!remember);
     safe.expiresAt = verifyToken(token).expiresAt;
-    return { token: token, user: safe };
+    return { token: token, user: safe, remembered: !!remember };
 }
 function readTrustedDevices(username) {
     var raw = prop('DEV_' + String(username).toLowerCase(), ''); if (!raw) return [];
@@ -1113,7 +1118,7 @@ function handleVerify2fa(p) {
     var deviceId = String(p.deviceId || '').trim();
     if (p.remember && deviceId)
         trustDevice(u.username, deviceId);
-    return issueSession(u);
+    return issueSession(u, !!p.remember);
 }
 function handleSet2faEmail(p) {
     if (secIsLocked())
@@ -2276,4 +2281,489 @@ function authorizeNow() {
   var to = Session.getEffectiveUser().getEmail();
   sendAppEmail(to, 'SMC Guidance - email is now authorized', 'This confirms email sending is authorized. Two-factor codes can now be emailed. You may close this.');
   return 'Test email sent to ' + to;
+}
+
+// ---------------------------------------------------------------------------
+// Kinder - Grade 2 manual paper evaluation encoder
+// ---------------------------------------------------------------------------
+var K2_MANUAL_HEADERS = ['id','controlNo','schoolYear','teacher','student','gradeSection','gradeLevel',
+    'scoresJson','comment','cleanlinessAvg','disciplineAvg','masteryAvg','personalityAvg','overallAvg',
+    'encodedBy','createdAt','updatedAt'];
+
+var K2_MANUAL_QUESTIONS = [
+    { category: 'Classroom Cleanliness', text: 'My teacher keeps our classroom clean and makes our classroom pleasant.' },
+    { category: 'Life-Enhancing Classroom Discipline', text: 'My teacher helps me to listen and checks if I understand the lesson well.' },
+    { category: 'Life-Enhancing Classroom Discipline', text: 'My teacher reminds me to pick up trash and clean my table.' },
+    { category: 'Life-Enhancing Classroom Discipline', text: 'My teacher comes and leaves the class on time.' },
+    { category: 'Life-Enhancing Classroom Discipline', text: 'My teacher helps me to be friendly and close to Jesus.' },
+    { category: 'Mastery of the Subject Matter', text: 'My teacher speaks clearly and explains the lesson at their best.' },
+    { category: 'Mastery of the Subject Matter', text: 'My teacher gives a short and quick quiz about the lesson explained.' },
+    { category: 'Mastery of the Subject Matter', text: 'My teacher asks different kinds of questions that I can answer.' },
+    { category: 'Mastery of the Subject Matter', text: 'My teacher shows colorful pictures and videos on screen that help me better understand the lesson.' },
+    { category: 'Mastery of the Subject Matter', text: 'My teacher gives very interesting activities that make me listen well.' },
+    { category: 'Teaching Personality', text: 'My teacher is neat and clean and looks very respectful.' },
+    { category: 'Teaching Personality', text: 'My teacher is friendly, smiles often, and says kind words to me.' },
+    { category: 'Teaching Personality', text: 'My teacher is patient and does not get angry often.' }
+];
+
+function k2ManualSheet() { return sheetOrCreate('K2 Manual Evaluations', K2_MANUAL_HEADERS); }
+function k2SafeCell(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+function k2ClientEntry(entry) {
+    var out = JSON.parse(JSON.stringify(entry));
+    delete out._row;
+    return out;
+}
+function k2Round(n) { return Math.round(Number(n) * 100) / 100; }
+function k2Average(values) {
+    if (!values || !values.length) return null;
+    var sum = 0;
+    for (var i = 0; i < values.length; i++) sum += Number(values[i]);
+    return k2Round(sum / values.length);
+}
+function k2Scores(raw) {
+    var a = raw instanceof Array ? raw : [];
+    if (a.length !== K2_MANUAL_QUESTIONS.length) throw httpError('Answer all 13 rating questions.', 'BAD_REQUEST');
+    return a.map(function (v) {
+        var n = Number(v);
+        if (n !== 1 && n !== 2 && n !== 3 && n !== 4) throw httpError('Every rating must be 1, 2, 3 or 4.', 'BAD_REQUEST');
+        return n;
+    });
+}
+function k2Results(scores) {
+    var groups = {
+        cleanliness: scores.slice(0, 1),
+        discipline: scores.slice(1, 5),
+        mastery: scores.slice(5, 10),
+        personality: scores.slice(10, 13)
+    };
+    return {
+        cleanlinessAvg: k2Average(groups.cleanliness),
+        disciplineAvg: k2Average(groups.discipline),
+        masteryAvg: k2Average(groups.mastery),
+        personalityAvg: k2Average(groups.personality),
+        overallAvg: k2Average(scores)
+    };
+}
+function k2ManualCols(headers) {
+    var c = {};
+    for (var i = 0; i < headers.length; i++) c[String(headers[i] || '').trim()] = i;
+    return c;
+}
+function k2ManualEntry(row, c, rowNumber) {
+    var scores = [];
+    try { scores = JSON.parse(String(row[c.scoresJson] || '[]')); } catch (e) { scores = []; }
+    return {
+        id: String(row[c.id] || ''), controlNo: String(row[c.controlNo] || ''),
+        schoolYear: String(row[c.schoolYear] || ''), teacher: String(row[c.teacher] || ''),
+        student: String(row[c.student] || ''), gradeSection: String(row[c.gradeSection] || ''),
+        gradeLevel: String(row[c.gradeLevel] || ''), scores: scores.map(Number),
+        comment: String(row[c.comment] || ''),
+        cleanlinessAvg: Number(row[c.cleanlinessAvg] || 0), disciplineAvg: Number(row[c.disciplineAvg] || 0),
+        masteryAvg: Number(row[c.masteryAvg] || 0), personalityAvg: Number(row[c.personalityAvg] || 0),
+        overallAvg: Number(row[c.overallAvg] || 0), encodedBy: String(row[c.encodedBy] || ''),
+        createdAt: String(row[c.createdAt] || ''), updatedAt: String(row[c.updatedAt] || ''),
+        _row: rowNumber
+    };
+}
+function k2AllEntries() {
+    var sh = k2ManualSheet(), values = sh.getDataRange().getValues();
+    if (values.length < 2) return [];
+    var c = k2ManualCols(values[0]), out = [];
+    for (var r = 1; r < values.length; r++) {
+        if (!String(values[r][c.id] || '').trim()) continue;
+        out.push(k2ManualEntry(values[r], c, r + 1));
+    }
+    return out;
+}
+function k2FilterEntries(entries, p) {
+    p = p || {};
+    var sy = String(p.schoolYear || '').trim().toLowerCase();
+    var teacher = String(p.teacher || '').trim().toLowerCase();
+    var section = String(p.gradeSection || '').trim().toLowerCase();
+    return entries.filter(function (e) {
+        if (sy && e.schoolYear.toLowerCase() !== sy) return false;
+        if (teacher && e.teacher.toLowerCase().indexOf(teacher) === -1) return false;
+        if (section && e.gradeSection.toLowerCase().indexOf(section) === -1) return false;
+        return true;
+    });
+}
+function k2FindEntry(id) {
+    id = String(id || '').trim();
+    var entries = k2AllEntries();
+    for (var i = 0; i < entries.length; i++) if (entries[i].id === id) return entries[i];
+    throw httpError('Manual evaluation entry not found.', 'NOT_FOUND');
+}
+function handleSaveK2Manual(session, p) {
+    p = p || {};
+    var teacher = String(p.teacher || '').replace(/\s+/g, ' ').trim();
+    var student = String(p.student || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    var schoolYear = String(p.schoolYear || '').replace(/\s+/g, ' ').trim();
+    var gradeSection = '';
+    var gradeLevel = 'KINDER-G2';
+    var classNo = String(p.classNo || p.controlNo || '').trim();
+    if (!teacher || !student || !schoolYear || !classNo) throw httpError('School year, class number, teacher, and student are required.', 'BAD_REQUEST');
+    if (classNo && !/^\d+$/.test(classNo)) throw httpError('Class Number must be blank or contain numbers only.', 'BAD_REQUEST');
+    var scores = k2Scores(p.scores), result = k2Results(scores), now = nowStamp();
+    var sh = k2ManualSheet(), values = sh.getDataRange().getValues(), c = k2ManualCols(values[0]);
+    var id = String(p.id || '').trim(), targetRow = 0, createdAt = now, encodedBy = session.username;
+    if (id) {
+        for (var r = 1; r < values.length; r++) if (String(values[r][c.id] || '') === id) {
+            targetRow = r + 1; createdAt = String(values[r][c.createdAt] || now); encodedBy = String(values[r][c.encodedBy] || session.username); break;
+        }
+        if (!targetRow) throw httpError('The entry to update was not found.', 'NOT_FOUND');
+    } else {
+        id = Utilities.getUuid();
+        targetRow = sh.getLastRow() + 1;
+    }
+    var controlNo = classNo;
+    var map = {
+        id: id, controlNo: controlNo, schoolYear: schoolYear, teacher: teacher, student: student,
+        gradeSection: gradeSection, gradeLevel: gradeLevel, scoresJson: JSON.stringify(scores),
+        comment: String(p.comment || '').trim().slice(0, 2000), cleanlinessAvg: result.cleanlinessAvg,
+        disciplineAvg: result.disciplineAvg, masteryAvg: result.masteryAvg,
+        personalityAvg: result.personalityAvg, overallAvg: result.overallAvg,
+        encodedBy: encodedBy, createdAt: createdAt, updatedAt: now
+    };
+    var row = K2_MANUAL_HEADERS.map(function (h) {
+        var value = map[h] === undefined ? '' : map[h];
+        return typeof value === 'string' && h !== 'scoresJson' ? k2SafeCell(value) : value;
+    });
+    sh.getRange(targetRow, 1, 1, row.length).setValues([row]);
+    return k2ClientEntry(k2ManualEntry(row, k2ManualCols(K2_MANUAL_HEADERS), targetRow));
+}
+function handleListK2Manual(session, p) {
+    var out = k2FilterEntries(k2AllEntries(), p);
+    out.sort(function (a, b) { return a.updatedAt < b.updatedAt ? 1 : -1; });
+    return { entries: out.slice(0, 500).map(k2ClientEntry), total: out.length, questions: K2_MANUAL_QUESTIONS };
+}
+function handleDeleteK2Manual(session, p) {
+    var entry = k2FindEntry(p && p.id);
+    k2ManualSheet().deleteRow(entry._row);
+    return { deleted: true, id: entry.id };
+}
+function k2RatingLabel(n) {
+    return n === 4 ? 'ALWAYS' : (n === 3 ? 'MOST OF THE TIME' : (n === 2 ? 'SOMETIMES' : 'NEVER'));
+}
+function k2DocHeading(body, text, size) {
+    var p = body.appendParagraph(text);
+    p.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setBold(true).setFontSize(size || 12);
+    return p;
+}
+function k2DocTable(body, rows, widths) {
+    var table = body.appendTable(rows);
+    if (widths) {
+        for (var r = 0; r < table.getNumRows(); r++) for (var c = 0; c < table.getRow(r).getNumCells() && c < widths.length; c++) {
+            try { table.getRow(r).getCell(c).setWidth(widths[c]); } catch (e) { }
+        }
+    }
+    return table;
+}
+function k2ExportDocx(doc, fileName) {
+    var id = doc.getId();
+    try {
+        doc.saveAndClose();
+        Utilities.sleep(300);
+        var mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        var url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '/export?mimeType=' + encodeURIComponent(mime);
+        var response = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+        if (response.getResponseCode() !== 200) throw httpError('Google could not export the Word document. HTTP ' + response.getResponseCode(), 'EXPORT');
+        var blob = response.getBlob().setName(fileName);
+        return { name: fileName, mimeType: mime, base64: Utilities.base64Encode(blob.getBytes()) };
+    } finally {
+        try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { }
+    }
+}
+function handleExportK2IndividualDocx(session, p) {
+    var e = k2FindEntry(p && p.id);
+    var doc = DocumentApp.create('K2 Individual Evaluation ' + e.controlNo), body = doc.getBody();
+    body.setMarginTop(36).setMarginBottom(36).setMarginLeft(45).setMarginRight(45);
+    k2DocHeading(body, 'STELLA MARIS COLLEGE', 14);
+    k2DocHeading(body, 'SCHOOL YEAR ' + e.schoolYear, 11);
+    k2DocHeading(body, 'STUDENT EVALUATION TO CLASSROOM TEACHER', 12);
+    k2DocHeading(body, '(KINDER - GRADE 2)', 11);
+    body.appendParagraph('');
+    k2DocTable(body, [['Class Number (C.N.)', e.controlNo], ['Name of Teacher', e.teacher], ['Your Name', e.student], ['Grade and Section', e.gradeSection]], [140, 340]);
+    body.appendParagraph('DIRECTION: Read each sentence and select the number that describes the teacher best.');
+    body.appendParagraph('(4) ALWAYS     (3) MOST OF THE TIME     (2) SOMETIMES     (1) NEVER').setBold(true);
+    var lastCategory = '';
+    for (var i = 0; i < K2_MANUAL_QUESTIONS.length; i++) {
+        var q = K2_MANUAL_QUESTIONS[i];
+        if (q.category !== lastCategory) {
+            body.appendParagraph(q.category.toUpperCase()).setBold(true).setSpacingBefore(8);
+            lastCategory = q.category;
+        }
+        body.appendParagraph((i + 1) + '. ' + q.text);
+        body.appendParagraph('Answer: ' + e.scores[i] + ' - ' + k2RatingLabel(e.scores[i])).setBold(true).setIndentStart(18);
+    }
+    body.appendParagraph('Write something about your teacher.').setBold(true).setSpacingBefore(10);
+    body.appendParagraph(e.comment || '(No written comment)');
+    body.appendPageBreak();
+    k2DocHeading(body, 'AUTOMATED RESULT', 14);
+    k2DocTable(body, [
+        ['Category','Average'],
+        ['Classroom Cleanliness',String(e.cleanlinessAvg.toFixed(2))],
+        ['Life-Enhancing Classroom Discipline',String(e.disciplineAvg.toFixed(2))],
+        ['Mastery of the Subject Matter',String(e.masteryAvg.toFixed(2))],
+        ['Teaching Personality',String(e.personalityAvg.toFixed(2))],
+        ['OVERALL',String(e.overallAvg.toFixed(2))]
+    ], [360, 120]);
+    body.appendParagraph('Encoded by: ' + e.encodedBy + '     Updated: ' + e.updatedAt).setFontSize(8).setForegroundColor('#666666');
+    var name = ('K2-' + e.teacher + '-' + e.student + '-' + e.controlNo + '.docx').replace(/[^A-Za-z0-9._-]+/g, '_');
+    return k2ExportDocx(doc, name);
+}
+function handleExportK2SummaryDocx(session, p) {
+    var entries = k2FilterEntries(k2AllEntries(), p);
+    if (!entries.length) throw httpError('No saved Kinder-Grade 2 evaluations match those filters.', 'NOT_FOUND');
+    var allScores = K2_MANUAL_QUESTIONS.map(function () { return []; });
+    for (var e = 0; e < entries.length; e++) for (var i = 0; i < K2_MANUAL_QUESTIONS.length; i++) allScores[i].push(entries[e].scores[i]);
+    var flat = [];
+    allScores.forEach(function (a) { flat = flat.concat(a); });
+    var categoryValues = { cleanliness: [], discipline: [], mastery: [], personality: [] };
+    entries.forEach(function (x) {
+        categoryValues.cleanliness.push(x.cleanlinessAvg); categoryValues.discipline.push(x.disciplineAvg);
+        categoryValues.mastery.push(x.masteryAvg); categoryValues.personality.push(x.personalityAvg);
+    });
+    var doc = DocumentApp.create('K2 Aggregate Evaluation Summary'), body = doc.getBody();
+    body.setMarginTop(36).setMarginBottom(36).setMarginLeft(45).setMarginRight(45);
+    k2DocHeading(body, 'STELLA MARIS COLLEGE', 14);
+    k2DocHeading(body, 'KINDER - GRADE 2 EVALUATION SUMMARY', 13);
+    body.appendParagraph('School Year: ' + (String(p.schoolYear || '').trim() || 'All'));
+    body.appendParagraph('Teacher: ' + (String(p.teacher || '').trim() || 'All'));
+    body.appendParagraph('Grade and Section: ' + (String(p.gradeSection || '').trim() || 'All'));
+    body.appendParagraph('Paper evaluations encoded: ' + entries.length).setBold(true);
+    body.appendParagraph('CATEGORY RESULTS').setBold(true).setSpacingBefore(10);
+    k2DocTable(body, [
+        ['Category','Average'],
+        ['Classroom Cleanliness',k2Average(categoryValues.cleanliness).toFixed(2)],
+        ['Life-Enhancing Classroom Discipline',k2Average(categoryValues.discipline).toFixed(2)],
+        ['Mastery of the Subject Matter',k2Average(categoryValues.mastery).toFixed(2)],
+        ['Teaching Personality',k2Average(categoryValues.personality).toFixed(2)],
+        ['OVERALL',k2Average(flat).toFixed(2)]
+    ], [360, 120]);
+    body.appendParagraph('ITEM RESULTS').setBold(true).setSpacingBefore(10);
+    var itemRows = [['#','Evaluation statement','Average']];
+    for (var q = 0; q < K2_MANUAL_QUESTIONS.length; q++) itemRows.push([String(q + 1), K2_MANUAL_QUESTIONS[q].text, k2Average(allScores[q]).toFixed(2)]);
+    k2DocTable(body, itemRows, [30, 390, 60]);
+    var comments = entries.filter(function (x) { return x.comment; });
+    if (comments.length) {
+        body.appendParagraph('WRITTEN COMMENTS').setBold(true).setSpacingBefore(10);
+        comments.slice(0, 250).forEach(function (x) { body.appendListItem(x.comment); });
+    }
+    body.appendParagraph('Generated: ' + nowStamp() + '     By: ' + session.username).setFontSize(8).setForegroundColor('#666666');
+    var name = ('K2-Aggregate-' + (p.teacher || 'All-Teachers') + '-' + (p.schoolYear || 'All-Years') + '.docx').replace(/[^A-Za-z0-9._-]+/g, '_');
+    return k2ExportDocx(doc, name);
+}
+
+
+// ---------------------------------------------------------------------------
+// Kinder-Grade 2 answered-paper PDF batches and template result workbooks
+// ---------------------------------------------------------------------------
+function k2EntriesForIds(ids) {
+    ids = ids instanceof Array ? ids.map(String) : [];
+    if (!ids.length) throw httpError('The current teacher batch has no saved papers.', 'BAD_REQUEST');
+    if (ids.length > 100) throw httpError('Compile at most 100 paper evaluations in one batch.', 'BAD_REQUEST');
+    var all = k2AllEntries(), byId = {};
+    all.forEach(function (e) { byId[e.id] = e; });
+    var out = [];
+    ids.forEach(function (id) { if (byId[id]) out.push(byId[id]); });
+    if (!out.length) throw httpError('None of the selected paper evaluations could be found.', 'NOT_FOUND');
+    var teacher = out[0].teacher.toLowerCase(), year = out[0].schoolYear.toLowerCase();
+    for (var i = 1; i < out.length; i++) {
+        if (out[i].teacher.toLowerCase() !== teacher || out[i].schoolYear.toLowerCase() !== year) {
+            throw httpError('A compiled batch must contain one teacher and one school year only.', 'BAD_REQUEST');
+        }
+    }
+    return out;
+}
+function k2TeacherSurname(teacher) {
+    var raw = String(teacher || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    if (!raw) return 'UNKNOWN';
+    if (raw.indexOf(',') >= 0) return raw.split(',')[0].trim().replace(/\./g, '') || 'UNKNOWN';
+    var parts = raw.split(' ');
+    while (parts.length > 1 && /^(JR\.?|SR\.?|II|III|IV|V)$/.test(parts[parts.length - 1])) parts.pop();
+    return parts.length ? parts[parts.length - 1].replace(/\./g, '') : 'UNKNOWN';
+}
+function k2TeacherOutputFolder(teacher) { return evalTeacherFolder(evalOutputFolder(), k2TeacherSurname(teacher)); }
+function k2PdfFolder(teacher) {
+    var teacherFolder = k2TeacherOutputFolder(teacher);
+    var found = teacherFolder.getFoldersByName('K2 Answered Paper PDFs');
+    return found.hasNext() ? found.next() : teacherFolder.createFolder('K2 Answered Paper PDFs');
+}
+function k2PaperChoices(score) {
+    var out = [];
+    [4,3,2,1].forEach(function (n) { out.push((Number(score) === n ? '● ' : '○ ') + n); });
+    return out.join('        ');
+}
+function k2AppendAnsweredPaper(body, entry, addBreak) {
+    if (addBreak) body.appendPageBreak();
+    var top = body.appendTable([['', 'C.N.  ' + entry.controlNo]]);
+    try { top.setBorderWidth(0); top.getCell(0, 1).getChild(0).asParagraph().setAlignment(DocumentApp.HorizontalAlignment.RIGHT).setBold(true); } catch (e) { }
+    k2DocHeading(body, 'STELLA MARIS COLLEGE', 14);
+    k2DocHeading(body, 'SCHOOL YEAR ' + entry.schoolYear, 10);
+    k2DocHeading(body, 'STUDENT EVALUATION TO CLASSROOM TEACHER', 12);
+    k2DocHeading(body, '(KINDER - GRADE 2)', 11);
+    body.appendParagraph('');
+    var info = body.appendTable([
+        ['Name of Teacher:', entry.teacher],
+        ['Subject:', entry.subject || ''],
+        ['Grade Level:', entry.gradeLevel || ''],
+        ['Your Name:', entry.student]
+    ]);
+    try { info.getColumnWidth(0); } catch (ignore) { }
+    body.appendParagraph('DIRECTION: Read the sentences below that say something about your teacher. Select the number that describes him or her best.').setFontSize(9);
+    body.appendParagraph('(4) ALWAYS       (3) MOST OF THE TIME       (2) SOMETIMES       (1) NEVER').setBold(true).setFontSize(9);
+    var lastCategory = '';
+    for (var i = 0; i < K2_MANUAL_QUESTIONS.length; i++) {
+        var q = K2_MANUAL_QUESTIONS[i];
+        if (q.category !== lastCategory) {
+            var cp = body.appendParagraph(q.category.toUpperCase());
+            cp.setBold(true).setFontSize(10).setSpacingBefore(6);
+            try { cp.editAsText().setBackgroundColor('#eeeeee'); } catch (shadeError) { }
+            lastCategory = q.category;
+        }
+        var table = body.appendTable([
+            ['•  ' + q.text],
+            [k2PaperChoices(entry.scores[i])]
+        ]);
+        try {
+            table.getCell(0, 0).getChild(0).asParagraph().setFontSize(9);
+            table.getCell(1, 0).getChild(0).asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER).setBold(true).setFontSize(10);
+        } catch (e2) { }
+    }
+    body.appendParagraph('Write something about your teacher.').setBold(true).setFontSize(9).setSpacingBefore(7);
+    body.appendParagraph('My teacher is ' + (entry.comment || '____________________________________________')).setFontSize(9);
+}
+function k2ExportPdfDocument(doc, fileName, folder) {
+    var id = doc.getId();
+    try {
+        doc.saveAndClose();
+        Utilities.sleep(350);
+        var mime = 'application/pdf';
+        var url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '/export?mimeType=' + encodeURIComponent(mime);
+        var response = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+        if (response.getResponseCode() !== 200) throw httpError('Google could not export the answered papers as PDF. HTTP ' + response.getResponseCode(), 'EXPORT');
+        var blob = response.getBlob().setName(fileName);
+        var old = folder.getFilesByName(fileName);
+        while (old.hasNext()) old.next().setTrashed(true);
+        var saved = folder.createFile(blob);
+        return { name: fileName, mimeType: mime, base64: Utilities.base64Encode(blob.getBytes()), driveUrl: saved.getUrl(), folderUrl: folder.getUrl() };
+    } finally {
+        try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { }
+    }
+}
+function k2MakePaperPdf(entries, singlePaper) {
+    var teacher = entries[0].teacher, year = entries[0].schoolYear, subject = entries[0].subject || '';
+    var doc = DocumentApp.create('K2 Answered Papers - ' + teacher + ' - ' + subject + ' - ' + year);
+    var body = doc.getBody();
+    body.setMarginTop(28).setMarginBottom(28).setMarginLeft(34).setMarginRight(34);
+    for (var i = 0; i < entries.length; i++) k2AppendAnsweredPaper(body, entries[i], i > 0);
+    var fileName = singlePaper
+        ? (evalSlug(teacher) + '_K2_PAPER_CN_' + evalSlug(entries[0].controlNo) + '_' + evalSlug(year) + '.pdf')
+        : (evalSlug(teacher) + '_K2_' + evalSlug(subject) + '_ANSWERED_PAPERS_' + evalSlug(year) + '.pdf');
+    fileName = fileName.replace(/_+/g, '_');
+    return k2ExportPdfDocument(doc, fileName, k2PdfFolder(teacher));
+}
+function handleExportK2PaperPdf(session, p) {
+    return k2MakePaperPdf([k2FindEntry(p && p.id)], true);
+}
+function handleCompileK2BatchPdf(session, p) {
+    return k2MakePaperPdf(k2EntriesForIds(p && p.ids), false);
+}
+function handleBuildK2ManualResults(session, p) {
+    var entries = k2EntriesForIds(p && p.ids);
+    var teacher = entries[0].teacher, year = entries[0].schoolYear;
+    var comments = entries.map(function (e) { return e.comment; }).filter(function (x) { return !!x; });
+    var record = {
+        source: 'Kinder-Grade 2 manual paper batch', teacher: teacher,
+        subject: 'KINDER-GRADE 2 MANUAL EVALUATION', section: '', grade: 0,
+        templateKey: 'kinderg2',
+        students: entries.map(function (e) { return { name: e.student, scores: e.scores.slice() }; }),
+        commentGroups: comments.length ? [{ question: 'Write something about your teacher.', lines: evalBuildCommentSummary(comments) }] : []
+    };
+    var fileName = evalSlug(teacher) + '_KINDER_GRADE_2_MANUAL_' + evalSlug(year);
+    var notes = [], folder = evalTeacherFolder(evalOutputFolder(), teacher);
+    var result = evalWriteWorkbook(evalTemplateFileId(), 'kinderg2', [record], fileName, folder, notes);
+    return {
+        name: result.name, id: result.id, url: result.url, xlsxUrl: result.xlsxUrl,
+        tabs: result.tabs, responses: result.responses, teacher: teacher,
+        schoolYear: year, folderUrl: folder.getUrl(), notes: notes
+    };
+}
+
+// ---------------------------------------------------------------------------
+// One-row Kinder-Grade 2 teacher/subject batches
+// ---------------------------------------------------------------------------
+var K2_BATCH_HEADERS = ['id','teacher','subject','schoolYear','papersJson','paperCount',
+    'cleanlinessAvg','disciplineAvg','masteryAvg','personalityAvg','overallAvg',
+    'encodedBy','createdAt','updatedAt','pdfUrl','resultUrl'];
+function k2BatchSheet() { return sheetOrCreate('K2 Manual Batches', K2_BATCH_HEADERS); }
+function k2ValidatePapers(raw) {
+    var papers = raw instanceof Array ? raw : [];
+    if (!papers.length) throw httpError('Add at least one paper before saving the batch.', 'BAD_REQUEST');
+    if (papers.length > 100) throw httpError('A batch can contain at most 100 papers.', 'BAD_REQUEST');
+    return papers.map(function (p) {
+        var classNo = String(p.classNo || p.controlNo || '').trim();
+        var student = String(p.student || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        var gradeLevel = String(p.gradeLevel || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        if (['KINDER','GRADE 1','GRADE 2'].indexOf(gradeLevel) < 0) throw httpError('Every paper must select Kinder, Grade 1, or Grade 2.', 'BAD_REQUEST');
+        if (classNo && !/^\d+$/.test(classNo)) throw httpError('Class Number must be blank or contain numbers only.', 'BAD_REQUEST');
+        if (!student) throw httpError('Every paper must have a student name.', 'BAD_REQUEST');
+        return { classNo: classNo, student: student, gradeLevel: gradeLevel, scores: k2Scores(p.scores), comment: String(p.comment || '').trim().slice(0, 2000) };
+    });
+}
+function k2BatchResults(papers) {
+    var all = [], clean = [], disc = [], master = [], person = [];
+    papers.forEach(function (p) {
+        all = all.concat(p.scores); clean = clean.concat(p.scores.slice(0,1));
+        disc = disc.concat(p.scores.slice(1,5)); master = master.concat(p.scores.slice(5,10));
+        person = person.concat(p.scores.slice(10,13));
+    });
+    return { cleanlinessAvg:k2Average(clean), disciplineAvg:k2Average(disc), masteryAvg:k2Average(master), personalityAvg:k2Average(person), overallAvg:k2Average(all) };
+}
+function k2BatchCols(headers) { return k2ManualCols(headers); }
+function k2BatchEntry(row, c, rowNo) {
+    var papers=[]; try{papers=JSON.parse(String(row[c.papersJson]||'[]'));}catch(e){}
+    return { id:String(row[c.id]||''), teacher:String(row[c.teacher]||''), subject:String(row[c.subject]||''), schoolYear:String(row[c.schoolYear]||''),
+        papers:papers, paperCount:Number(row[c.paperCount]||papers.length||0), cleanlinessAvg:Number(row[c.cleanlinessAvg]||0), disciplineAvg:Number(row[c.disciplineAvg]||0),
+        masteryAvg:Number(row[c.masteryAvg]||0), personalityAvg:Number(row[c.personalityAvg]||0), overallAvg:Number(row[c.overallAvg]||0), encodedBy:String(row[c.encodedBy]||''),
+        createdAt:String(row[c.createdAt]||''), updatedAt:String(row[c.updatedAt]||''), pdfUrl:String(row[c.pdfUrl]||''), resultUrl:String(row[c.resultUrl]||''), _row:rowNo };
+}
+function k2AllBatches() {
+    var sh=k2BatchSheet(),v=sh.getDataRange().getValues();if(v.length<2)return[];var c=k2BatchCols(v[0]),out=[];
+    for(var r=1;r<v.length;r++)if(String(v[r][c.id]||'').trim())out.push(k2BatchEntry(v[r],c,r+1));return out;
+}
+function k2ClientBatch(e){var o=JSON.parse(JSON.stringify(e));delete o._row;return o;}
+function k2FindBatch(id){var all=k2AllBatches();for(var i=0;i<all.length;i++)if(all[i].id===String(id||''))return all[i];throw httpError('Teacher batch not found.','NOT_FOUND');}
+function handleSaveK2Batch(session,p){
+    p=p||{};var teacher=String(p.teacher||'').replace(/\s+/g,' ').trim().toUpperCase(),subject=String(p.subject||'').replace(/\s+/g,' ').trim().toUpperCase(),year=String(p.schoolYear||'').trim();
+    if(!/^[^,]+,\s*[^,]+$/.test(teacher))throw httpError('Teacher name must use SURNAME, FIRST NAME format.','BAD_REQUEST');
+    if(!subject)throw httpError('Subject is required.','BAD_REQUEST');
+    if(!/^\d+$/.test(year))throw httpError('School Year must contain numbers only.','BAD_REQUEST');
+    var papers=k2ValidatePapers(p.papers),res=k2BatchResults(papers),now=nowStamp(),sh=k2BatchSheet(),v=sh.getDataRange().getValues(),c=k2BatchCols(v[0]);
+    var id=String(p.id||'').trim(),rowNo=0,created=now,encoded=session.username,pdfUrl='',resultUrl='';
+    if(id){for(var r=1;r<v.length;r++)if(String(v[r][c.id]||'')===id){rowNo=r+1;created=String(v[r][c.createdAt]||now);encoded=String(v[r][c.encodedBy]||session.username);pdfUrl=String(v[r][c.pdfUrl]||'');resultUrl=String(v[r][c.resultUrl]||'');break;}if(!rowNo)throw httpError('Batch to update was not found.','NOT_FOUND');}
+    else{id=Utilities.getUuid();rowNo=sh.getLastRow()+1;}
+    var map={id:id,teacher:teacher,subject:subject,schoolYear:year,papersJson:JSON.stringify(papers),paperCount:papers.length,
+        cleanlinessAvg:res.cleanlinessAvg,disciplineAvg:res.disciplineAvg,masteryAvg:res.masteryAvg,personalityAvg:res.personalityAvg,overallAvg:res.overallAvg,
+        encodedBy:encoded,createdAt:created,updatedAt:now,pdfUrl:pdfUrl,resultUrl:resultUrl};
+    var row=K2_BATCH_HEADERS.map(function(h){var x=map[h]===undefined?'':map[h];return typeof x==='string'&&h!=='papersJson'?k2SafeCell(x):x;});
+    sh.getRange(rowNo,1,1,row.length).setValues([row]);return k2ClientBatch(k2BatchEntry(row,k2BatchCols(K2_BATCH_HEADERS),rowNo));
+}
+function handleListK2Batches(session,p){p=p||{};var y=String(p.schoolYear||'').toLowerCase(),t=String(p.teacher||'').toLowerCase(),s=String(p.subject||'').toLowerCase();var out=k2AllBatches().filter(function(x){return(!y||x.schoolYear.toLowerCase().indexOf(y)>=0)&&(!t||x.teacher.toLowerCase().indexOf(t)>=0)&&(!s||x.subject.toLowerCase().indexOf(s)>=0);});out.sort(function(a,b){return a.updatedAt<b.updatedAt?1:-1;});return{batches:out.slice(0,300).map(k2ClientBatch),total:out.length};}
+function handleDeleteK2Batch(session,p){var b=k2FindBatch(p&&p.id);k2BatchSheet().deleteRow(b._row);return{deleted:true,id:b.id};}
+function k2BatchPaperEntries(batch){return batch.papers.map(function(p){return{controlNo:p.classNo,student:p.student,gradeLevel:p.gradeLevel,scores:p.scores,comment:p.comment,teacher:batch.teacher,subject:batch.subject,schoolYear:batch.schoolYear};});}
+function k2UpdateBatchLink(batch,header,value){var sh=k2BatchSheet(),v=sh.getDataRange().getValues(),c=k2BatchCols(v[0]);if(c[header]>=0)sh.getRange(batch._row,c[header]+1).setValue(value);}
+function handleCompileK2SavedBatchPdf(session,p){var b=k2FindBatch(p&&p.id),result=k2MakePaperPdf(k2BatchPaperEntries(b),false);k2UpdateBatchLink(b,'pdfUrl',result.driveUrl);return result;}
+function handleBuildK2SavedBatchResults(session,p){
+    var b=k2FindBatch(p&&p.id),comments=b.papers.map(function(x){return x.comment;}).filter(Boolean);
+    var record={source:'Kinder-Grade 2 manual paper batch',teacher:b.teacher,subject:b.subject,section:'KINDER-G2',grade:0,templateKey:'kinderg2',
+        students:b.papers.map(function(x){return{name:x.student,scores:x.scores.slice()};}),commentGroups:comments.length?[{question:'Write something about your teacher.',lines:evalBuildCommentSummary(comments)}]:[]};
+    var fileName=evalSlug(b.teacher)+'_KINDER_GRADE_2_'+evalSlug(b.subject)+'_'+evalSlug(b.schoolYear),notes=[],folder=k2TeacherOutputFolder(b.teacher);
+    var result=evalWriteWorkbook(evalTemplateFileId(),'kinderg2',[record],fileName,folder,notes),ss=SpreadsheetApp.openById(result.id);
+    var oldTab=ss.getSheetByName(result.tabs[0]);if(oldTab){var wanted=('KINDER-G2 – '+b.subject).replace(/[\[\]\*\/\\\?:]/g,'-').substring(0,95);oldTab.setName(wanted);result.tabs=[wanted];}
+    k2UpdateBatchLink(b,'resultUrl',result.url);
+    return{name:result.name,id:result.id,url:result.url,xlsxUrl:result.xlsxUrl,tabs:result.tabs,responses:result.responses,teacher:b.teacher,subject:b.subject,schoolYear:b.schoolYear,folderUrl:folder.getUrl(),notes:notes};
 }

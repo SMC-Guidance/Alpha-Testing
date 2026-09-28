@@ -134,23 +134,22 @@ SMC.evalexport = (function () {
 
         teachers.forEach(function (t) {
             var files = t.files || [];
-            h += '<div class="ex-saved-group">' +
-                '<div class="ex-saved-teacher">' +
-                  (t.url
-                    ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">' + esc(t.teacher) + '</a>'
-                    : esc(t.teacher)) +
-                  '<span class="ex-saved-count">' + files.length + '</span>' +
-                '</div>';
+            h += '<details class="ex-saved-group">' +
+                '<summary class="ex-saved-teacher"><span class="ex-saved-teacher-name">' + esc(t.teacher) + '</span>' +
+                  '<span class="ex-saved-count">' + files.length + ' workbook' + (files.length === 1 ? '' : 's') + '</span></summary>' +
+                '<div class="ex-saved-files">' +
+                  (t.url ? '<div class="ex-saved-folder"><a href="' + esc(t.url) + '" target="_blank" rel="noopener">Open teacher folder in Drive</a></div>' : '');
             files.forEach(function (f) { h += fileRow(f); });
-            h += '</div>';
+            h += '</div></details>';
         });
 
         if (loose.length) {
-            h += '<div class="ex-saved-group">' +
-                '<div class="ex-saved-teacher">Not in a teacher folder' +
-                  '<span class="ex-saved-count">' + loose.length + '</span></div>';
+            h += '<details class="ex-saved-group">' +
+                '<summary class="ex-saved-teacher"><span class="ex-saved-teacher-name">Not in a teacher folder</span>' +
+                  '<span class="ex-saved-count">' + loose.length + ' workbook' + (loose.length === 1 ? '' : 's') + '</span></summary>' +
+                '<div class="ex-saved-files">';
             loose.forEach(function (f) { h += fileRow(f); });
-            h += '</div>';
+            h += '</div></details>';
         }
 
         host.innerHTML = h;
@@ -454,7 +453,11 @@ SMC.evalexport = (function () {
             document.getElementById('epPanel-folder') ||
             document.getElementById('evalProcMount');
         if (!host) return false;
-        if (document.getElementById('exCard')) return true;
+        if (document.getElementById('exCard')) {
+            loadBatches();
+            loadSaved();
+            return true;
+        }
 
         var wrap = document.createElement('div');
         wrap.innerHTML = template();

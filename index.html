@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; frame-src 'self' blob: https://docs.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests">
 <title>Stella Maris College — Guidance Center</title>
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="stylesheet" href="css/eval-export.css">
+<link rel="stylesheet" href="css/k2manual.css">
+<link rel="stylesheet" href="css/evalhub.css">
 <link rel="shortcut icon" href="assets/favicon.ico">
 <link rel="apple-touch-icon" href="assets/favicon.ico">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -18,6 +20,9 @@
 <link rel="stylesheet" href="css/drive-folder.css">
 <link rel="stylesheet" href="css/classlists.css">
 <link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/pro-ui.css">
+<link rel="stylesheet" href="css/topbar-only.css">
+<link rel="stylesheet" href="css/themes.css">
 <script src="js/theme-init.js"></script>
 <meta name="theme-color" content="#002B6B">
 <meta name="mobile-web-app-capable" content="yes">
@@ -129,6 +134,7 @@ Authentication and student data are handled by a secure server. No passwords, re
 <button type="button" class="sblogo-btn" id="navHome" aria-label="Go to dashboard" title="Home">
 <img src="assets/logo.jpg" class="sblogo" onerror="this.style.display='none'" alt="SMC">
 </button>
+<div class="sb-nav-label">Workspace</div>
 <button class="sbi on" id="navDash">
 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
 <span>Dashboard</span>
@@ -313,7 +319,35 @@ Authentication and student data are handled by a secure server. No passwords, re
 </div>
 
 <div id="evalView" style="display:none">
-<div id="ebMount"></div>
+<div class="eval-hub" id="evalHub">
+  <section class="eval-hub-landing" id="evalHubLanding">
+    <div class="eval-hub-hero">
+      <span class="eval-hub-eyebrow">Teachers Evaluation</span>
+      <h2>What would you like to do?</h2>
+      <p>Choose one focused workspace. Your tools stay organized, and only the task you select appears on screen.</p>
+    </div>
+    <div class="eval-tool-grid">
+      <button class="eval-tool-card" type="button" data-eval-open="workbooks">
+        <span class="eval-tool-icon"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg></span>
+        <span class="eval-tool-copy"><strong>Online evaluation workbooks</strong><span>Read teacher folders, preview responses, and build template-based workbooks.</span><span class="eval-tool-meta">Google Forms &amp; Drive</span></span><span class="eval-tool-arrow">→</span>
+      </button>
+      <button class="eval-tool-card k2" type="button" data-eval-open="k2">
+        <span class="eval-tool-icon"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 3h16v18H4z"/><path d="M8 8h8M8 12h8M8 16h5"/><path d="M17 15l1.5 1.5L21 14"/></svg></span>
+        <span class="eval-tool-copy"><strong>Kinder–Grade 2 paper encoder</strong><span>Encode paper responses in one batch, then create the compiled PDF and results.</span><span class="eval-tool-meta">Manual paper forms</span></span><span class="eval-tool-arrow">→</span>
+      </button>
+    </div>
+    <div class="eval-hub-steps" aria-label="Evaluation workflow"><div class="eval-hub-step"><b>1</b><span>Choose the correct evaluation tool</span></div><div class="eval-hub-step"><b>2</b><span>Review entries before generating files</span></div><div class="eval-hub-step"><b>3</b><span>Open completed files from Google Drive</span></div></div>
+  </section>
+  <section class="eval-workspace" id="evalHubWorkspace" hidden>
+    <div class="eval-workspace-bar">
+      <button class="eval-hub-back" id="evalHubBack" type="button" aria-label="Back to evaluation tools">← Tools</button>
+      <div class="eval-current"><strong id="evalHubCurrentTitle">Evaluation tool</strong><span id="evalHubCurrentSub"></span></div>
+      <div class="eval-tool-switches" role="tablist" aria-label="Evaluation tools"><button class="eval-tool-switch" type="button" data-eval-tool="workbooks" role="tab">Workbooks</button><button class="eval-tool-switch" type="button" data-eval-tool="k2" role="tab">K2 Paper</button></div>
+    </div>
+    <div class="eval-panel" data-eval-panel="workbooks" hidden><div id="ebMount"></div></div>
+    <div class="eval-panel" data-eval-panel="k2" hidden><div id="k2Mount"></div></div>
+  </section>
+</div>
 </div>
 
 <div id="proceduresView" style="display:none">
@@ -419,35 +453,21 @@ Save PDF</button>
 </div>
 </div>
 <div class="wni-ov" id="wnIntro" aria-hidden="true">
-<div class="wni-box" role="dialog" aria-modal="true" aria-labelledby="wniTitle">
+<div class="wni-box wni-major" role="dialog" aria-modal="true" aria-labelledby="wniTitle">
 <button class="tour-x" id="wnIntroX" type="button" aria-label="Close">&times;</button>
-<div class="wni-badge">✨</div>
-<h2 class="wni-title" id="wniTitle">What's New</h2>
-<p class="wni-sub">Here's what's new for you</p>
+<div class="wni-badge" aria-hidden="true">NEW</div>
+<p class="wni-kicker">Welcome · Major appearance update</p>
+<h2 class="wni-title" id="wniTitle">A calmer, more personal workspace</h2>
+<p class="wni-sub">Explore the refined themes, clearer typography, and a more consistent workspace.</p>
+<div class="wni-alpha" role="note" aria-label="Alpha testing notice"><span class="wni-alpha-tag">Alpha testing</span><div><strong>Testing since June 17, 2026</strong><span>This website has been in alpha testing since it was first deployed. Features may continue to change while the Guidance Office tests and improves the system.</span></div></div>
+<div class="wni-theme-preview" aria-hidden="true"><span class="wni-swatch navy"></span><span class="wni-swatch walnut"></span><span class="wni-swatch cream"></span><span class="wni-swatch sage"></span><span class="wni-swatch sakura"></span></div>
 <ul class="wni-list">
-<li><span class="wni-ic">💬</span><div><strong>Profile photos &amp; active status</strong><span>Add a photo and see who's active while you chat one-to-one.</span></div></li>
-<li><span class="wni-ic">🌙</span><div><strong>Navy-blue dark mode</strong><span>A calm night theme with high-contrast, easy-to-read text on every screen.</span></div></li>
-<li><span class="wni-ic">📋</span><div><strong>Colour-coded class lists</strong><span>Sections show as customisable colour lines by grade and section.</span></div></li>
-<li><span class="wni-ic">↩️</span><div><strong>Unsend your messages</strong><span>Made a mistake? Remove your own messages from a conversation.</span></div></li>
-<li><span class="wni-ic">⚡</span><div><strong>Faster messaging</strong><span>Conversations now update almost instantly.</span></div></li>
-<li><span class="wni-ic">🔓</span><div><strong>Stay signed in</strong><span>You stay logged in after closing the tab, and new tabs open straight to your account.</span></div></li>
-<li><span class="wni-ic">🛠️</span><div><strong>Maintenance notices</strong><span>You'll see a clear notice whenever the site is briefly down for an update.</span></div></li>
-<li><span class="wni-ic">🔐</span><div><strong>Two-step sign-in</strong><span>New devices are verified with a one-time code sent to your email.</span></div></li>
+<li><span class="wni-ic">1</span><div><strong>Five selectable themes</strong><span>Choose Wood &amp; Navy, Classic Light, Midnight Navy, Calm Sage, or Sakura from Settings.</span></div></li>
+<li><span class="wni-ic">2</span><div><strong>Teachers Evaluation tab</strong><span>Explore online workbooks, generated evaluations grouped by teacher, and the complete Kinder–Grade 2 paper workflow.</span></div></li>
 </ul>
-<div class="wni-sec">
-<div class="wni-sec-head"><span class="wni-sec-ic">🔒</span><strong>Why this site is hacker-proof</strong></div>
-<p class="wni-sec-lead">Every student record is protected by several independent layers of security:</p>
-<ul class="wni-sec-list">
-<li><span class="wni-sec-b">🔑</span><div><strong>Passwords are never stored</strong><span>We keep only a scrambled one-way fingerprint of your password — HMAC-SHA256 with a unique salt and a secret server pepper, stretched 12,000 times. Nobody, not even an administrator, can read your real password.</span></div></li>
-<li><span class="wni-sec-b">🎫</span><div><strong>Tamper-proof sign-in tokens</strong><span>Each session uses a digitally signed token that expires automatically and is verified with a timing-attack-safe check, so tokens cannot be forged or replayed.</span></div></li>
-<li><span class="wni-sec-b">🚨</span><div><strong>Brute-force lockout</strong><span>Too many wrong password attempts automatically lock the entire site until an administrator restores it with a secret unlock code.</span></div></li>
-<li><span class="wni-sec-b">🛡️</span><div><strong>Role-based access control</strong><span>Every action is re-checked on the server. Counselors, co-admins and admins can only reach the data and tools their role allows.</span></div></li>
-<li><span class="wni-sec-b">🧼</span><div><strong>Input is sanitised</strong><span>All text is cleaned before it is displayed, blocking cross-site scripting (XSS) and injection attacks.</span></div></li>
-<li><span class="wni-sec-b">🔐</span><div><strong>Encrypted &amp; Google-secured</strong><span>All traffic travels over encrypted HTTPS/TLS, and records live inside Google's protected infrastructure.</span></div></li>
-</ul>
-</div>
 <div class="wni-ft">
-<button class="abtn" id="wnIntroSkip" type="button">Got it</button>
+<button class="wn-ghost" id="wnIntroSkip" type="button">Close</button>
+<button class="abtn" id="wnIntroStart" type="button">Continue to required tour</button>
 </div>
 </div>
 </div>
@@ -475,11 +495,15 @@ Save PDF</button>
 <div><h2 id="setTitle">Settings</h2><p>Preferences &amp; support</p></div>
 </div>
 <div class="set-sec">
-<h3>Appearance</h3>
-<div class="set-row">
-<div><strong>Dark mode</strong><span>Switch between the light and dark theme.</span></div>
-<button class="set-switch" id="setThemeToggle" type="button" role="switch" aria-checked="false" aria-label="Toggle dark mode"><span class="set-knob"></span></button>
+<div class="set-sec-title"><div><h3>Appearance</h3><p class="set-hint">Choose a theme. Your selection is saved on this device.</p></div><span class="set-new">New</span></div>
+<div class="theme-grid" id="themeChoices" role="radiogroup" aria-label="Website theme">
+<button class="theme-card" id="themeWood" type="button" role="radio" aria-checked="false" data-theme-choice="wood"><span class="theme-preview tp-wood"><i></i><i></i><i></i></span><span class="theme-card-copy"><strong>Wood &amp; Navy</strong><small>Warm, focused default</small></span><span class="theme-check" aria-hidden="true">✓</span></button>
+<button class="theme-card" type="button" role="radio" aria-checked="false" data-theme-choice="light"><span class="theme-preview tp-light"><i></i><i></i><i></i></span><span class="theme-card-copy"><strong>Classic Light</strong><small>Clean and familiar</small></span><span class="theme-check" aria-hidden="true">✓</span></button>
+<button class="theme-card" type="button" role="radio" aria-checked="false" data-theme-choice="dark"><span class="theme-preview tp-dark"><i></i><i></i><i></i></span><span class="theme-card-copy"><strong>Midnight Navy</strong><small>Low-light comfort</small></span><span class="theme-check" aria-hidden="true">✓</span></button>
+<button class="theme-card" type="button" role="radio" aria-checked="false" data-theme-choice="sage"><span class="theme-preview tp-sage"><i></i><i></i><i></i></span><span class="theme-card-copy"><strong>Calm Sage</strong><small>Soft and restorative</small></span><span class="theme-check" aria-hidden="true">✓</span></button>
+<button class="theme-card" type="button" role="radio" aria-checked="false" data-theme-choice="sakura"><span class="theme-preview tp-sakura"><i></i><i></i><i></i></span><span class="theme-card-copy"><strong>Sakura</strong><small>Soft blush and plum</small></span><span class="theme-check" aria-hidden="true">✓</span></button>
 </div>
+<div class="set-update-row"><div><strong>Major update tour</strong><span>See the new taskbar and learn where to switch themes.</span></div><button class="set-tour-btn" id="setReplayTour" type="button">Replay tour</button></div>
 </div>
 <div class="set-sec">
 <h3>Report a problem</h3>
@@ -535,7 +559,9 @@ Save PDF</button>
 <script src="js/export.js"></script>
 <script src="js/records.js"></script>
 <script src="js/procedures.js"></script>
+<script src="js/evalhub.js"></script>
 <script src="js/evalexport.js"></script>
+<script src="js/k2manual.js"></script>
 <script src="js/profile.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/incidents.js"></script>
