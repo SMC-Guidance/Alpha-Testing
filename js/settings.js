@@ -9,19 +9,27 @@ SMC.settings = (function () {
     function esc(s) { s = (s == null) ? '' : String(s); return ui().esc ? ui().esc(s) : s; }
     function fmtDate(s) { return ui().fmtDate ? ui().fmtDate(s) : esc(s); }
     function isAdmin() { return !!(user && user.role === 'admin'); }
-    function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
-    function applyTheme(dark) {
-        if (dark) document.documentElement.setAttribute('data-theme', 'dark');
-        else document.documentElement.removeAttribute('data-theme');
-        try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (e) {}
+    var THEMES = ['wood', 'light', 'dark', 'sage', 'sakura'];
+    function getTheme() {
+        var t = document.documentElement.getAttribute('data-theme') || 'wood';
+        return THEMES.indexOf(t) >= 0 ? t : 'wood';
+    }
+    function applyTheme(theme) {
+        if (THEMES.indexOf(theme) < 0) theme = 'wood';
+        document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
         syncThemeUI();
+        toast('Theme changed to ' + ({ wood: 'Wood & Navy', light: 'Classic Light', dark: 'Midnight Navy', sage: 'Calm Sage', sakura: 'Sakura' }[theme]) + '.', 'ok');
     }
     function syncThemeUI() {
-        var t = document.getElementById('setThemeToggle');
-        if (!t) return;
-        var d = isDark();
-        t.classList.toggle('on', d);
-        t.setAttribute('aria-checked', d ? 'true' : 'false');
+        var current = getTheme();
+        var cards = document.querySelectorAll('[data-theme-choice]');
+        for (var i = 0; i < cards.length; i++) {
+            var selected = cards[i].getAttribute('data-theme-choice') === current;
+            cards[i].classList.toggle('selected', selected);
+            cards[i].setAttribute('aria-checked', selected ? 'true' : 'false');
+            cards[i].tabIndex = selected ? 0 : -1;
+        }
     }
     function localReports() { try { return JSON.parse(localStorage.getItem(REPORTS_KEY) || '[]') || []; } catch (e) { return []; } }
     function saveLocalReport(rep) {
@@ -87,8 +95,20 @@ SMC.settings = (function () {
     }
     function setUser(u) { user = u; }
     function bind() {
-        var t = document.getElementById('setThemeToggle');
-        if (t) t.addEventListener('click', function () { applyTheme(!isDark()); });
+        var choices = document.getElementById('themeChoices');
+        if (choices) {
+            choices.addEventListener('click', function (e) { var c = e.target.closest('[data-theme-choice]'); if (c) applyTheme(c.getAttribute('data-theme-choice')); });
+            choices.addEventListener('keydown', function (e) {
+                if (e.key !== 'ArrowRight' && e.key !== 'ArrowDown' && e.key !== 'ArrowLeft' && e.key !== 'ArrowUp') return;
+                e.preventDefault();
+                var n = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
+                var next = (THEMES.indexOf(getTheme()) + n + THEMES.length) % THEMES.length;
+                applyTheme(THEMES[next]);
+                var c = choices.querySelector('[data-theme-choice="' + THEMES[next] + '"]'); if (c) c.focus();
+            });
+        }
+        var replay = document.getElementById('setReplayTour');
+        if (replay) replay.addEventListener('click', function () { close(); if (SMC.app && SMC.app.showUpdateTour) SMC.app.showUpdateTour(); });
         var sc = document.getElementById('setClose');
         if (sc) sc.addEventListener('click', close);
         var sr = document.getElementById('setReportSend');
@@ -98,5 +118,5 @@ SMC.settings = (function () {
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { var mm = document.getElementById('settingsModal'); if (mm && mm.classList.contains('on')) close(); } });
         syncThemeUI();
     }
-    return { open: open, close: close, bind: bind, setUser: setUser };
+    return { open: open, close: close, bind: bind, setUser: setUser, applyTheme: applyTheme, getTheme: getTheme };
 })();
